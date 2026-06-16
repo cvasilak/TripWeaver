@@ -1,0 +1,8 @@
+# TripWeaver — Phase 1 (CrewAI orchestration only)
+# Install with:  uv pip install -r requirements.txt   (or: pip install -r requirements.txt)
+#
+# The [anthropic] extra is REQUIRED: it pulls the official `anthropic` SDK so
+# CrewAI's native Anthropic provider can talk to Claude. Without it, using an
+# `anthropic/...` model raises "Anthropic native provider not available".
+crewai[anthropic]>=1.14
+python-dotenv>=1.0
