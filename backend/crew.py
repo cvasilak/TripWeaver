@@ -150,9 +150,10 @@ def build_crew() -> Crew:
             "final structured trip plan."
         ),
         expected_output=(
-            "The final TripPlan: summary, the chosen flight and hotel, the full day-by-day "
-            "itinerary, the estimated total for the whole party, the budget, whether it fits, "
-            "and budget notes."
+            "A single JSON object for the final TripPlan, with ALL of these fields populated "
+            "in one response (never a partial object): summary, selected_flight, selected_hotel, "
+            "itinerary (one entry per day), currency, estimated_total (whole party), budget, "
+            "within_budget, and budget_notes."
         ),
         context=[design_itinerary],
         agent=budget_auditor,

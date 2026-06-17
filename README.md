@@ -42,7 +42,7 @@ hierarchical, delegating "Concierge" manager.
 
 ```
 backend/
-  config.py   # LLM config — Claude Opus 4.8 via CrewAI's native Anthropic provider
+  config.py   # LLM config — Claude Sonnet 4.5 via CrewAI's native Anthropic provider
   tools.py    # mock Search Flights / Hotels / Activities tools (@tool)
   models.py   # TripPlan Pydantic schema (the structured deliverable)
   crew.py     # agents + tasks + crew assembly
@@ -72,13 +72,17 @@ the trip (origin, destination, dates, budget, interests).
 
 ### Model & cost
 
-Agents default to **Claude Opus 4.8**. A full run makes several LLM calls (one
-or more per agent). While learning, you can switch to a cheaper model without
-touching code:
+Agents default to **Claude Sonnet 4.5** — the latest Sonnet that CrewAI 1.14.7
+routes through Anthropic's *native* structured-outputs path, which makes the final
+`TripPlan` reliably schema-conforming. A full run makes several LLM calls (one or
+more per agent). You can switch model — to something stronger or cheaper — without
+touching code (these are also on the native allow-list, so structured output stays
+reliable):
 
 ```bash
 # in .env
-TRIPWEAVER_MODEL=anthropic/claude-sonnet-4-6   # or anthropic/claude-haiku-4-5
+TRIPWEAVER_MODEL=anthropic/claude-opus-4-5    # stronger
+TRIPWEAVER_MODEL=anthropic/claude-haiku-4-5   # cheaper
 ```
 
 ### What "done" looks like for Phase 1
