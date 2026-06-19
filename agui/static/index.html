@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TripWeaver — AG-UI demo</title>
+  <style>
+    :root { --bg:#0f1422; --panel:#172033; --ink:#e7ecf5; --muted:#8aa0c0; --accent:#5db0ff; --good:#5fd08a; }
+    * { box-sizing:border-box; }
+    body { margin:0; font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+    header { padding:16px 20px; border-bottom:1px solid #243049; display:flex; gap:14px; align-items:center; }
+    header h1 { font-size:16px; margin:0; }
+    header .sub { color:var(--muted); font-size:12px; }
+    .controls { margin-left:auto; display:flex; gap:8px; align-items:center; }
+    select, button { font:inherit; border-radius:8px; border:1px solid #2c3a58; background:#1d2840; color:var(--ink); padding:7px 12px; }
+    button { background:var(--accent); color:#06203b; font-weight:600; cursor:pointer; border:none; }
+    button:disabled { opacity:.5; cursor:default; }
+    main { display:grid; grid-template-columns:1fr 1fr; gap:14px; padding:14px 20px; align-items:start; }
+    .card { background:var(--panel); border:1px solid #243049; border-radius:12px; padding:14px; }
+    .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 10px; }
+    #chat { min-height:120px; white-space:pre-wrap; }
+    #events { font-family:ui-monospace,Menlo,monospace; font-size:12px; max-height:280px; overflow:auto; }
+    #events div { padding:2px 0; border-bottom:1px solid #1d2740; }
+    .ev-tool { color:var(--accent); } .ev-state { color:var(--good); } .ev-run { color:var(--muted); } .ev-err { color:#ff7a7a; }
+    pre#state { font-size:12px; max-height:360px; overflow:auto; background:#101725; padding:10px; border-radius:8px; margin:0; }
+    .full { grid-column:1 / -1; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>TripWeaver — AG-UI live stream</h1>
+      <div class="sub">Watch the agent's events arrive in real time over SSE.</div>
+    </div>
+    <div class="controls">
+      <select id="mode">
+        <option value="demo">demo (no LLM — real A2A calls)</option>
+        <option value="crew">crew (real CrewAI — needs API credits)</option>
+      </select>
+      <button id="go">Plan my trip ▶</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Conversation (TEXT_MESSAGE_*)</h2>
+      <div id="chat"></div>
+    </section>
+    <section class="card">
+      <h2>Event log (TOOL_CALL_*, STEP_*, STATE_*, RUN_*)</h2>
+      <div id="events"></div>
+    </section>
+    <section class="card full">
+      <h2>Shared trip state (STATE_SNAPSHOT / STATE_DELTA)</h2>
+      <pre id="state">{}</pre>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let state = {};
+
+    // Minimal JSON Patch (RFC 6902) for the ops the demo uses.
+    function applyPatch(doc, ops) {
+      for (const op of ops) {
+        const parts = op.path.split("/").slice(1);
+        let node = doc;
+        for (let i = 0; i < parts.length - 1; i++) node = node[parts[i]];
+        const key = parts[parts.length - 1];
+        if (op.op === "remove") delete node[key];
+        else node[key] = op.value;   // add / replace
+      }
+      return doc;
+    }
+
+    function logEvent(cls, text) {
+      const d = document.createElement("div");
+      d.className = cls; d.textContent = text;
+      $("events").appendChild(d);
+      $("events").scrollTop = $("events").scrollHeight;
+    }
+
+    function handle(e) {
+      switch (e.type) {
+        case "RUN_STARTED": logEvent("ev-run", "● RUN_STARTED"); break;
+        case "TEXT_MESSAGE_START": $("chat").textContent += "\n"; break;
+        case "TEXT_MESSAGE_CONTENT": $("chat").textContent += e.delta; break;
+        case "STEP_STARTED": logEvent("ev-run", "▷ STEP " + e.stepName); break;
+        case "STEP_FINISHED": break;
+        case "TOOL_CALL_START": logEvent("ev-tool", "🔧 " + e.toolCallName + "()"); break;
+        case "TOOL_CALL_RESULT": {
+          const n = (JSON.parse(e.content).options || []).length;
+          logEvent("ev-tool", "   ↳ " + n + " options returned"); break;
+        }
+        case "STATE_SNAPSHOT": state = e.snapshot; renderState(); logEvent("ev-state", "◆ STATE_SNAPSHOT"); break;
+        case "STATE_DELTA": applyPatch(state, e.delta); renderState(); logEvent("ev-state", "◆ STATE_DELTA " + e.delta.map(o=>o.path).join(",")); break;
+        case "RUN_FINISHED": logEvent("ev-run", "✔ RUN_FINISHED"); break;
+        case "RUN_ERROR": logEvent("ev-err", "✖ RUN_ERROR: " + e.message); break;
+      }
+    }
+    function renderState() { $("state").textContent = JSON.stringify(state, null, 2); }
+
+    async function run() {
+      $("go").disabled = true;
+      $("chat").textContent = ""; $("events").innerHTML = ""; state = {}; renderState();
+      const rid = (p) => p + Math.random().toString(16).slice(2, 10);
+      const body = { threadId: rid("t-"), runId: rid("r-"), messages: [], tools: [], context: [], state: {}, forwardedProps: {} };
+      try {
+        const resp = await fetch("/agui?mode=" + $("mode").value, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let i;
+          while ((i = buf.indexOf("\n\n")) >= 0) {
+            const frame = buf.slice(0, i); buf = buf.slice(i + 2);
+            const line = frame.split("\n").find((l) => l.startsWith("data:"));
+            if (line) handle(JSON.parse(line.slice(5).trim()));
+          }
+        }
+      } catch (err) {
+        logEvent("ev-err", "✖ " + err);
+      } finally {
+        $("go").disabled = false;
+      }
+    }
+    $("go").addEventListener("click", run);
+  </script>
+</body>
+</html>

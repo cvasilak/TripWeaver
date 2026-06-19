@@ -6,8 +6,8 @@ agent technologies stacked together:
 | Tech | Role in TripWeaver | Phase |
 |------|--------------------|-------|
 | **CrewAI** | The orchestration brain — a crew of role-based agents | 1 ✓ |
-| **A2A** | Reaching external supplier agents (flights, hotels) | **2 (this phase)** |
-| **AG-UI** | Streaming the live agent activity to a frontend | 3 |
+| **A2A** | Reaching external supplier agents (flights, hotels) | 2 ✓ |
+| **AG-UI** | Streaming the live agent activity to a frontend | **3 (this phase)** |
 | **A2UI** | Declarative, interactive UI rendered from the agent | 4 |
 
 Each phase is added on top of a working baseline, so when something breaks you
@@ -239,8 +239,105 @@ the official A2A Python docs (`A2AStarletteApplication`, `AgentExecutor`,
 the official SDK directly rather than CrewAI's own `a2a` wrapper so the protocol —
 not the framework — stays front and center.
 
+---
+
+## Phase 3 — AG-UI (streaming agent activity to a UI)
+
+The crew (and the suppliers) now sit behind an **AG-UI** server: a FastAPI
+endpoint that accepts a `RunAgentInput` and streams standard **AG-UI events**
+over SSE — the event vocabulary a frontend consumes to show what the agent is
+doing, live: streaming text, tool calls, evolving shared state, and run
+lifecycle.
+
+```
+ Browser (vanilla-JS page, or CopilotKit)
+        │  POST /agui            ▲  SSE: RUN_STARTED, TEXT_MESSAGE_*, TOOL_CALL_*,
+        ▼  (RunAgentInput)       │       STATE_SNAPSHOT/DELTA, RUN_FINISHED
+ AG-UI server (FastAPI + ag-ui-protocol)  ──►  runner  ──►  (A2A suppliers / CrewAI crew)
+```
+
+### What got added
+
+```
+agui/
+  server.py          # FastAPI: POST /agui (SSE) + serves the demo page at /
+  runners.py         # demo_runner (no LLM) and crew_runner (real crew)
+  test_client.py     # Python SSE consumer — prints/asserts the event stream
+  static/index.html  # zero-build browser page that renders the live stream
+backend/
+  a2a_client.py      # + aquery_supplier() async variant (the server is async)
+  crew.py            # build_crew() now accepts step/task callbacks for event mapping
+```
+
+Two runners, chosen with `?mode=`:
+
+| Mode | What it does | Needs |
+|------|--------------|-------|
+| `demo` (default) | Emits the full AG-UI event lifecycle and makes **real A2A calls** to the Phase 2 suppliers — great for seeing the protocol without spending anything | the two suppliers running |
+| `crew` | Runs the **real CrewAI crew**, mapping its step/task callbacks to AG-UI events | suppliers + `ANTHROPIC_API_KEY` |
+
+### Run it
+
+```bash
+# suppliers (Phase 2) + the AG-UI server
+uv run python -m a2a_suppliers.flight_supplier &
+uv run python -m a2a_suppliers.hotel_supplier  &
+uv run python -m agui.server                       # http://127.0.0.1:8000
+```
+
+Then either open the browser page or use the Python client:
+
+```bash
+# Browser: open http://127.0.0.1:8000/  and click "Plan my trip"
+# Terminal:
+uv run python -m agui.test_client demo     # or: crew  (needs API credits)
+```
+
+A demo run produces this AG-UI event stream on the wire (real output, trimmed —
+each line is one SSE frame; long payloads abbreviated with `…`):
+
+```text
+data: {"type":"RUN_STARTED","threadId":"t1","runId":"r1"}
+data: {"type":"STATE_SNAPSHOT","snapshot":{"request":{"origin":"Athens","destination":"Tokyo","days":8,"travelers":2,…},"flights":null,"hotels":null,"plan":null}}
+data: {"type":"TEXT_MESSAGE_START","messageId":"7e3c…","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"7e3c…","delta":"Planning your 8-day trip"}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"7e3c…","delta":" to Tokyo for 2 traveler"}
+…                                                       # streamed in chunks
+data: {"type":"TEXT_MESSAGE_END","messageId":"7e3c…"}
+data: {"type":"STEP_STARTED","stepName":"research_flights"}
+data: {"type":"TOOL_CALL_START","toolCallId":"9777…","toolCallName":"search_flights"}
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"9777…","delta":"{\"origin\": \"Athens\", \"destination\": \"Tokyo\", \"depart_date\": \"2026-10-05\", \"travelers\": 2}"}
+data: {"type":"TOOL_CALL_END","toolCallId":"9777…"}
+data: {"type":"TOOL_CALL_RESULT","toolCallId":"9777…","role":"tool","content":"{\"travelers\": 2, \"options\": [ … 3 flights from the A2A FlightSupplier … ]}"}
+data: {"type":"STATE_DELTA","delta":[{"op":"replace","path":"/flights","value":[ … ]}]}
+data: {"type":"STEP_FINISHED","stepName":"research_flights"}
+…  # research_hotels emits the same STEP/TOOL_CALL_*/STATE_DELTA sequence (real A2A call to HotelSupplier)
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"bb15…","delta":"Picked Emirates (780 EUR/pp) and Hotel Ryumeikan …"}
+data: {"type":"STATE_SNAPSHOT","snapshot":{"request":{…},"flights":[…],"hotels":[…],"plan":{…}}}
+data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1","result":{"selected_flight":{"airline":"Emirates",…},"estimated_total":2855,"currency":"EUR",…}}
+```
+
+Note the wire format: every event is a JSON object on a `data:` line (AG-UI uses
+camelCase — `threadId`, `toolCallName`), and `STATE_DELTA` carries a JSON-Patch
+(RFC 6902) op the frontend applies to its local copy of the shared state.
+
+### Using CopilotKit (the production-grade frontend)
+
+The bundled page is deliberately dependency-free so you can *see* the raw AG-UI
+events. For a real app you'd point **CopilotKit** (`@copilotkit/react-core` +
+`@ag-ui/client`) at the same `/agui` endpoint and get chat, generative UI, shared
+state, and human-in-the-loop out of the box — which is exactly what Phase 4
+(A2UI) builds on.
+
+### Testing without an API key
+
+`demo` mode exercises the entire AG-UI layer (SSE encoding, every event type, the
+browser renderer) **without an LLM**, by driving the real A2A suppliers. Only
+`crew` mode needs `ANTHROPIC_API_KEY`.
+
 ## Next phase
 
-Phase 3 wraps the crew in an **AG-UI** server and connects a frontend, streaming
-the live agent activity (text, tool calls, shared state, human-in-the-loop) to
-the user.
+Phase 4 adds **A2UI**: instead of plain text + a JSON state panel, the agent
+emits declarative, interactive UI (flight cards, an editable itinerary, a
+booking/approval form) rendered over this same AG-UI stream — including a
+human-in-the-loop approval gate before anything is "booked".

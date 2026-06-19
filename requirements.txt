@@ -12,5 +12,9 @@ python-dotenv>=1.0
 # mature 0.3.x line matches the official A2A Python docs and keeps the example
 # clear. (Independent of CrewAI's own a2a wrapper, which we don't use here.)
 a2a-sdk>=0.3,<1.0
-uvicorn>=0.30   # serves the supplier ASGI apps
-httpx>=0.27     # A2A client transport
+uvicorn>=0.30   # serves the supplier ASGI apps (and the Phase 3 AG-UI server)
+httpx>=0.27     # A2A client transport (and the Phase 3 test client)
+
+# Phase 3 — AG-UI server (stream live agent events to a frontend over SSE).
+ag-ui-protocol>=0.1   # AG-UI core event types + SSE EventEncoder
+fastapi>=0.115        # the AG-UI HTTP/SSE endpoint

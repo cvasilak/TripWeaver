@@ -19,7 +19,14 @@ from .models import TripPlan
 from .tools import search_activities, search_flights, search_hotels
 
 
-def build_crew() -> Crew:
+def build_crew(step_callback=None, task_callback=None) -> Crew:
+    """Build the TripWeaver crew.
+
+    ``step_callback`` / ``task_callback`` are optional hooks CrewAI invokes during
+    a run (per agent step, and per completed task). Phase 3's AG-UI server passes
+    them to translate live crew activity into AG-UI events; left unset, behavior
+    is identical to Phases 1-2.
+    """
     llm = get_llm()
 
     # ---- Agents (the "who") ------------------------------------------------
@@ -177,4 +184,6 @@ def build_crew() -> Crew:
         ],
         process=Process.sequential,
         verbose=True,
+        step_callback=step_callback,
+        task_callback=task_callback,
     )

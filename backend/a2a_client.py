@@ -61,6 +61,13 @@ def query_supplier(base_url: str, params: dict[str, Any], timeout: float = 30.0)
     return asyncio.run(_query(base_url, params, timeout))
 
 
+async def aquery_supplier(
+    base_url: str, params: dict[str, Any], timeout: float = 30.0
+) -> dict[str, Any]:
+    """Async variant for callers already inside an event loop (e.g. the AG-UI server)."""
+    return await _query(base_url, params, timeout)
+
+
 if __name__ == "__main__":
     # CLI: query a running supplier directly (no crew / no LLM needed). Example:
     #   python -m backend.a2a_client http://127.0.0.1:8001 \
