@@ -3,118 +3,213 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>TripWeaver — AG-UI demo</title>
+  <title>TripWeaver — AG-UI + A2UI demo</title>
   <style>
-    :root { --bg:#0f1422; --panel:#172033; --ink:#e7ecf5; --muted:#8aa0c0; --accent:#5db0ff; --good:#5fd08a; }
+    :root { --bg:#0f1422; --panel:#172033; --ink:#e7ecf5; --muted:#8aa0c0; --accent:#5db0ff; --good:#5fd08a; --line:#243049; }
     * { box-sizing:border-box; }
     body { margin:0; font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); }
-    header { padding:16px 20px; border-bottom:1px solid #243049; display:flex; gap:14px; align-items:center; }
+    header { padding:16px 20px; border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
     header h1 { font-size:16px; margin:0; }
     header .sub { color:var(--muted); font-size:12px; }
     .controls { margin-left:auto; display:flex; gap:8px; align-items:center; }
     select, button { font:inherit; border-radius:8px; border:1px solid #2c3a58; background:#1d2840; color:var(--ink); padding:7px 12px; }
-    button { background:var(--accent); color:#06203b; font-weight:600; cursor:pointer; border:none; }
-    button:disabled { opacity:.5; cursor:default; }
-    main { display:grid; grid-template-columns:1fr 1fr; gap:14px; padding:14px 20px; align-items:start; }
-    .card { background:var(--panel); border:1px solid #243049; border-radius:12px; padding:14px; }
+    #go { background:var(--accent); color:#06203b; font-weight:600; cursor:pointer; border:none; }
+    #go:disabled { opacity:.5; cursor:default; }
+    main { display:grid; grid-template-columns:1.1fr .9fr; gap:14px; padding:14px 20px; align-items:start; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; }
     .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 10px; }
-    #chat { min-height:120px; white-space:pre-wrap; }
-    #events { font-family:ui-monospace,Menlo,monospace; font-size:12px; max-height:280px; overflow:auto; }
+    #chat { min-height:40px; white-space:pre-wrap; font-size:13px; }
+    #events { font-family:ui-monospace,Menlo,monospace; font-size:12px; max-height:220px; overflow:auto; }
     #events div { padding:2px 0; border-bottom:1px solid #1d2740; }
-    .ev-tool { color:var(--accent); } .ev-state { color:var(--good); } .ev-run { color:var(--muted); } .ev-err { color:#ff7a7a; }
-    pre#state { font-size:12px; max-height:360px; overflow:auto; background:#101725; padding:10px; border-radius:8px; margin:0; }
-    .full { grid-column:1 / -1; }
+    .ev-tool { color:var(--accent); } .ev-state { color:var(--good); } .ev-run { color:var(--muted); }
+    .ev-a2ui { color:#d6a4ff; } .ev-err { color:#ff7a7a; }
+    .left { grid-column:1; } .right { grid-column:2; }
+
+    /* ---- A2UI renderer styles (the client's component catalog) ---- */
+    #surfaces { display:flex; flex-direction:column; gap:14px; }
+    .a2ui-card { background:#101a2e; border:1px solid #2a3a5a; border-radius:10px; padding:12px; }
+    .a2ui-col { display:flex; flex-direction:column; gap:6px; }
+    .a2ui-row { display:flex; flex-direction:row; gap:10px; align-items:center; }
+    .a2ui-h2 { font-size:18px; font-weight:700; margin:2px 0; }
+    .a2ui-h3 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:8px 0 2px; }
+    .a2ui-body { font-size:14px; } .a2ui-caption { font-size:12px; color:var(--muted); }
+    .a2ui-divider { border:none; border-top:1px solid var(--line); margin:8px 0; width:100%; }
+    .a2ui-btn { align-self:flex-start; background:#27406b; color:var(--ink); border:1px solid #37527f; border-radius:8px; padding:6px 14px; cursor:pointer; font-size:13px; }
+    .a2ui-btn.primary { background:var(--accent); color:#06203b; font-weight:700; border:none; }
+    .a2ui-field { display:flex; flex-direction:column; gap:3px; }
+    .a2ui-field input { background:#0c1422; border:1px solid #2c3a58; border-radius:6px; color:var(--ink); padding:6px 8px; }
   </style>
 </head>
 <body>
   <header>
     <div>
-      <h1>TripWeaver — AG-UI live stream</h1>
-      <div class="sub">Watch the agent's events arrive in real time over SSE.</div>
+      <h1>TripWeaver — AG-UI stream → A2UI rendered UI</h1>
+      <div class="sub">Pick <b>a2ui</b> to see the agent emit declarative UI (cards, buttons) rendered live; buttons round-trip for human-in-the-loop.</div>
     </div>
     <div class="controls">
       <select id="mode">
-        <option value="demo">demo (no LLM — real A2A calls)</option>
-        <option value="crew">crew (real CrewAI — needs API credits)</option>
+        <option value="a2ui">a2ui (declarative UI — no LLM)</option>
+        <option value="demo">demo (raw events — no LLM)</option>
+        <option value="crew">crew (real CrewAI — needs API key)</option>
       </select>
       <button id="go">Plan my trip ▶</button>
     </div>
   </header>
 
   <main>
-    <section class="card">
+    <section class="card right" style="grid-row:1 / span 2;">
+      <h2>Rendered UI — A2UI surfaces</h2>
+      <div id="surfaces"><div class="a2ui-caption">Run in <b>a2ui</b> mode to render declarative surfaces here.</div></div>
+    </section>
+    <section class="card left">
       <h2>Conversation (TEXT_MESSAGE_*)</h2>
       <div id="chat"></div>
     </section>
-    <section class="card">
-      <h2>Event log (TOOL_CALL_*, STEP_*, STATE_*, RUN_*)</h2>
+    <section class="card left">
+      <h2>AG-UI event log (TOOL_CALL_*, STEP_*, STATE_*, CUSTOM a2ui, RUN_*)</h2>
       <div id="events"></div>
-    </section>
-    <section class="card full">
-      <h2>Shared trip state (STATE_SNAPSHOT / STATE_DELTA)</h2>
-      <pre id="state">{}</pre>
     </section>
   </main>
 
   <script>
     const $ = (id) => document.getElementById(id);
-    let state = {};
 
-    // Minimal JSON Patch (RFC 6902) for the ops the demo uses.
-    function applyPatch(doc, ops) {
-      for (const op of ops) {
-        const parts = op.path.split("/").slice(1);
-        let node = doc;
-        for (let i = 0; i < parts.length - 1; i++) node = node[parts[i]];
-        const key = parts[parts.length - 1];
-        if (op.op === "remove") delete node[key];
-        else node[key] = op.value;   // add / replace
+    // ---------- JSON Pointer helpers (for A2UI data-model binding) ----------
+    function ptrGet(obj, pointer) {
+      if (!pointer || pointer === "/") return obj;
+      let node = obj;
+      for (const p of pointer.split("/").slice(1)) { if (node == null) return undefined; node = node[p]; }
+      return node;
+    }
+    function ptrSet(obj, pointer, value) {
+      const parts = pointer.split("/").slice(1);
+      let node = obj;
+      for (let i = 0; i < parts.length - 1; i++) node = (node[parts[i]] ??= {});
+      node[parts[parts.length - 1]] = value;
+    }
+
+    // ---------- A2UI renderer: surfaces = id -> {comps, data} ----------
+    const surfaces = {};
+    function resolve(surface, v) {
+      if (v && typeof v === "object" && "path" in v) return ptrGet(surface.data, v.path) ?? "";
+      return v;
+    }
+    function renderComponent(surface, id) {
+      const c = surface.comps[id];
+      if (!c) return document.createTextNode("");
+      switch (c.component) {
+        case "Text": {
+          const el = document.createElement("div");
+          el.className = "a2ui-" + (c.usageHint || "body");
+          el.textContent = String(resolve(surface, c.text));
+          return el;
+        }
+        case "Card": {
+          const el = document.createElement("div"); el.className = "a2ui-card";
+          el.appendChild(renderComponent(surface, c.child)); return el;
+        }
+        case "Column": case "List": {
+          const el = document.createElement("div"); el.className = "a2ui-col";
+          (c.children || []).forEach((cid) => el.appendChild(renderComponent(surface, cid))); return el;
+        }
+        case "Row": {
+          const el = document.createElement("div"); el.className = "a2ui-row";
+          (c.children || []).forEach((cid) => el.appendChild(renderComponent(surface, cid))); return el;
+        }
+        case "Divider": { const el = document.createElement("hr"); el.className = "a2ui-divider"; return el; }
+        case "Button": {
+          const el = document.createElement("button");
+          el.className = "a2ui-btn" + (c.primary ? " primary" : "");
+          el.appendChild(renderComponent(surface, c.child));
+          el.addEventListener("click", () => handleAction(surface, c));
+          return el;
+        }
+        case "TextField": {
+          const wrap = document.createElement("label"); wrap.className = "a2ui-field";
+          const lab = document.createElement("span"); lab.className = "a2ui-caption";
+          lab.textContent = String(resolve(surface, c.label || "")); wrap.appendChild(lab);
+          const inp = document.createElement("input");
+          inp.type = c.textFieldType === "obscured" ? "password" : (c.textFieldType === "number" ? "number" : "text");
+          inp.value = String(resolve(surface, c.text || "")); wrap.appendChild(inp); return wrap;
+        }
+        default: {
+          const el = document.createElement("div"); el.className = "a2ui-caption";
+          el.textContent = "[" + c.component + " — not rendered by this minimal catalog]"; return el;
+        }
       }
-      return doc;
+    }
+    function renderSurface(sid) {
+      const surface = surfaces[sid];
+      let host = document.getElementById("surface-" + sid);
+      if (!host) {
+        const ph = $("surfaces").querySelector(".a2ui-caption"); if (ph) ph.remove();
+        host = document.createElement("div"); host.id = "surface-" + sid; $("surfaces").appendChild(host);
+      }
+      host.innerHTML = "";
+      if (surface.comps["root"]) host.appendChild(renderComponent(surface, "root"));
+    }
+    function handleA2UI(msg) {
+      if (msg.createSurface) {
+        const sid = msg.createSurface.surfaceId;
+        surfaces[sid] = { comps: {}, data: {} };
+        const old = document.getElementById("surface-" + sid); if (old) old.innerHTML = "";
+        logEvent("ev-a2ui", "◇ createSurface " + sid);
+      } else if (msg.updateComponents) {
+        const u = msg.updateComponents, s = surfaces[u.surfaceId] || (surfaces[u.surfaceId] = { comps: {}, data: {} });
+        u.components.forEach((c) => (s.comps[c.id] = c));
+        renderSurface(u.surfaceId);
+        logEvent("ev-a2ui", "◇ updateComponents " + u.surfaceId + " (" + u.components.length + " components)");
+      } else if (msg.updateDataModel) {
+        const u = msg.updateDataModel, s = surfaces[u.surfaceId] || (surfaces[u.surfaceId] = { comps: {}, data: {} });
+        ptrSet(s.data, u.path || "/", u.value); renderSurface(u.surfaceId);
+        logEvent("ev-a2ui", "◇ updateDataModel " + (u.path || "/"));
+      } else if (msg.deleteSurface) {
+        const sid = msg.deleteSurface.surfaceId; delete surfaces[sid];
+        const el = document.getElementById("surface-" + sid); if (el) el.remove();
+      }
+    }
+    function handleAction(surface, comp) {
+      const ev = comp.action && comp.action.event; if (!ev) return;
+      const props = { action: ev.name };
+      for (const [k, v] of Object.entries(ev.context || {})) props[k] = resolve(surface, v);
+      logEvent("ev-a2ui", "▶ action '" + ev.name + "' → re-running");
+      stream(props, false);   // human-in-the-loop: round-trip back to the agent
     }
 
+    // ---------- AG-UI event handling ----------
     function logEvent(cls, text) {
-      const d = document.createElement("div");
-      d.className = cls; d.textContent = text;
-      $("events").appendChild(d);
-      $("events").scrollTop = $("events").scrollHeight;
+      const d = document.createElement("div"); d.className = cls; d.textContent = text;
+      $("events").appendChild(d); $("events").scrollTop = $("events").scrollHeight;
     }
-
     function handle(e) {
       switch (e.type) {
         case "RUN_STARTED": logEvent("ev-run", "● RUN_STARTED"); break;
         case "TEXT_MESSAGE_START": $("chat").textContent += "\n"; break;
         case "TEXT_MESSAGE_CONTENT": $("chat").textContent += e.delta; break;
         case "STEP_STARTED": logEvent("ev-run", "▷ STEP " + e.stepName); break;
-        case "STEP_FINISHED": break;
         case "TOOL_CALL_START": logEvent("ev-tool", "🔧 " + e.toolCallName + "()"); break;
-        case "TOOL_CALL_RESULT": {
-          const n = (JSON.parse(e.content).options || []).length;
-          logEvent("ev-tool", "   ↳ " + n + " options returned"); break;
-        }
-        case "STATE_SNAPSHOT": state = e.snapshot; renderState(); logEvent("ev-state", "◆ STATE_SNAPSHOT"); break;
-        case "STATE_DELTA": applyPatch(state, e.delta); renderState(); logEvent("ev-state", "◆ STATE_DELTA " + e.delta.map(o=>o.path).join(",")); break;
+        case "TOOL_CALL_RESULT": logEvent("ev-tool", "   ↳ " + ((JSON.parse(e.content).options || []).length) + " options"); break;
+        case "STATE_SNAPSHOT": logEvent("ev-state", "◆ STATE_SNAPSHOT"); break;
+        case "STATE_DELTA": logEvent("ev-state", "◆ STATE_DELTA"); break;
+        case "CUSTOM": if (e.name === "a2ui") handleA2UI(e.value); break;
         case "RUN_FINISHED": logEvent("ev-run", "✔ RUN_FINISHED"); break;
         case "RUN_ERROR": logEvent("ev-err", "✖ RUN_ERROR: " + e.message); break;
       }
     }
-    function renderState() { $("state").textContent = JSON.stringify(state, null, 2); }
 
-    async function run() {
+    // ---------- streaming ----------
+    async function stream(forwardedProps, clear) {
       $("go").disabled = true;
-      $("chat").textContent = ""; $("events").innerHTML = ""; state = {}; renderState();
+      if (clear) { $("chat").textContent = ""; $("events").innerHTML = ""; for (const k in surfaces) delete surfaces[k]; $("surfaces").innerHTML = ""; }
       const rid = (p) => p + Math.random().toString(16).slice(2, 10);
-      const body = { threadId: rid("t-"), runId: rid("r-"), messages: [], tools: [], context: [], state: {}, forwardedProps: {} };
+      const body = { threadId: rid("t-"), runId: rid("r-"), messages: [], tools: [], context: [], state: {}, forwardedProps: forwardedProps || {} };
       try {
         const resp = await fetch("/agui?mode=" + $("mode").value, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
         });
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = "";
+        const reader = resp.body.getReader(); const decoder = new TextDecoder(); let buf = "";
         while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
+          const { value, done } = await reader.read(); if (done) break;
           buf += decoder.decode(value, { stream: true });
           let i;
           while ((i = buf.indexOf("\n\n")) >= 0) {
@@ -123,13 +218,10 @@
             if (line) handle(JSON.parse(line.slice(5).trim()));
           }
         }
-      } catch (err) {
-        logEvent("ev-err", "✖ " + err);
-      } finally {
-        $("go").disabled = false;
-      }
+      } catch (err) { logEvent("ev-err", "✖ " + err); }
+      finally { $("go").disabled = false; }
     }
-    $("go").addEventListener("click", run);
+    $("go").addEventListener("click", () => stream({}, true));
   </script>
 </body>
 </html>

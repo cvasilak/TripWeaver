@@ -7,8 +7,8 @@ agent technologies stacked together:
 |------|--------------------|-------|
 | **CrewAI** | The orchestration brain — a crew of role-based agents | 1 ✓ |
 | **A2A** | Reaching external supplier agents (flights, hotels) | 2 ✓ |
-| **AG-UI** | Streaming the live agent activity to a frontend | **3 (this phase)** |
-| **A2UI** | Declarative, interactive UI rendered from the agent | 4 |
+| **AG-UI** | Streaming the live agent activity to a frontend | 3 ✓ |
+| **A2UI** | Declarative, interactive UI rendered from the agent | **4 (this phase)** |
 
 Each phase is added on top of a working baseline, so when something breaks you
 know which layer to blame.
@@ -335,9 +335,100 @@ state, and human-in-the-loop out of the box — which is exactly what Phase 4
 browser renderer) **without an LLM**, by driving the real A2A suppliers. Only
 `crew` mode needs `ANTHROPIC_API_KEY`.
 
-## Next phase
+---
 
-Phase 4 adds **A2UI**: instead of plain text + a JSON state panel, the agent
-emits declarative, interactive UI (flight cards, an editable itinerary, a
-booking/approval form) rendered over this same AG-UI stream — including a
-human-in-the-loop approval gate before anything is "booked".
+## Phase 4 — A2UI (declarative, interactive UI from the agent)
+
+Instead of plain text + a JSON state panel, the agent now emits **A2UI** — a
+declarative description of the UI (flight cards, a chosen hotel, an itinerary, a
+"Confirm & book" button). It's **data, not code**: the client renders it with its
+own trusted component catalog, so an LLM can't inject markup. A2UI rides over the
+Phase 3 AG-UI stream as `CUSTOM` events, and button presses round-trip back to the
+agent — that's the **human-in-the-loop** approval gate.
+
+```
+ agent ──(AG-UI CUSTOM event: A2UI v0.9 message)──▶ browser A2UI renderer ──renders──▶ cards/buttons
+   ▲                                                                                        │
+   └────────────── new /agui run: {action:"book", …}  ◀── user clicks "Confirm & book" ─────┘
+```
+
+### What got added
+
+```
+agui/
+  a2ui.py            # builds A2UI v0.9 surfaces (plan + booking) and VALIDATES each
+                     #   message against crewai's bundled v0.9 spec validator
+  runners.py         # + a2ui_runner: real A2A research -> A2UI surfaces -> HITL "book"
+  static/index.html  # + an A2UI renderer (catalog subset, data binding, action round-trip)
+  test_client.py     # + a2ui mode: re-validates surfaces on the wire + drives the HITL leg
+```
+
+We use the **A2UI v0.9 "basic catalog"** — emitting `createSurface` /
+`updateComponents` / `updateDataModel` messages, with flat components (`Text`,
+`Card`, `Column`, `Row`, `Button`, `TextField`, `Divider`), `{ "path": "/ptr" }`
+data-model bindings, and `{ "event": { … } }` actions. The A2UI models, catalog,
+and JSON-Schema validator all ship inside CrewAI (`crewai.a2a.extensions.a2ui`) —
+we build messages and validate them against that spec before sending.
+
+### Run it
+
+Same stack as Phase 3 (suppliers + AG-UI server), then pick `a2ui`:
+
+```bash
+uv run python -m a2a_suppliers.flight_supplier &
+uv run python -m a2a_suppliers.hotel_supplier  &
+uv run python -m agui.server
+
+# Browser: open http://127.0.0.1:8000/ , choose "a2ui", click "Plan my trip"
+#          -> flight cards render; "Confirm & book" triggers the HITL booking surface
+# Terminal:
+uv run python -m agui.test_client a2ui     # validates surfaces + drives the booking round-trip
+```
+
+### What the agent emits (real, trimmed)
+
+A2UI message #1 creates the surface; #2 sends the component tree (one component is
+the `root`). Here's the create plus an excerpt of the components — a flight card
+and the HITL **book** button:
+
+```json
+{ "version": "v0.9", "createSurface": { "surfaceId": "trip-plan",
+    "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json",
+    "theme": { "primaryColor": "#5db0ff", "agentDisplayName": "TripWeaver" } } }
+```
+```json
+{ "version": "v0.9", "updateComponents": { "surfaceId": "trip-plan", "components": [
+  { "id": "root", "component": "Column", "children": ["f0", "book"] },
+  { "id": "f0",  "component": "Card",   "child": "f0c" },
+  { "id": "f0c", "component": "Column", "children": ["f0t", "f0m", "f0b"] },
+  { "id": "f0t", "component": "Text",   "text": "Qatar Airways", "usageHint": "body" },
+  { "id": "f0m", "component": "Text",   "text": "1 stop(s) · 18.0h · 845 EUR/pp", "usageHint": "caption" },
+  { "id": "f0b", "component": "Button", "child": "f0bl",
+    "action": { "event": { "name": "choose_flight", "context": { "airline": "Qatar Airways" } } } },
+  { "id": "book", "component": "Button", "child": "bookbl", "primary": true,
+    "action": { "event": { "name": "book", "context": { "airline": "Emirates", "total": 2855, "currency": "EUR" } } } }
+] } }
+```
+
+When the user clicks **book**, the renderer posts a new run with
+`forwardedProps = { action: "book", … }`; the agent responds with a `booking`
+surface ("✅ Booking confirmed" + a confirmation code). Nothing is "booked" until
+that human action — the HITL gate.
+
+### Testing without an API key
+
+`a2ui` mode (like `demo`) needs **no LLM** — it does the real A2A research and
+renders A2UI surfaces; the test client re-validates every surface against the v0.9
+spec and exercises the booking round-trip. Use `?mode=crew` to have the real crew
+drive it (needs `ANTHROPIC_API_KEY`).
+
+---
+
+## All four phases, together
+
+A single conversation now exercises the full stack: **CrewAI** orchestrates,
+calls **A2A** supplier agents, streams everything over **AG-UI**, and renders it
+as interactive **A2UI** — with a human-in-the-loop gate before booking. From here
+the natural next steps are a production **CopilotKit** frontend (it consumes this
+exact `/agui` stream and renders A2UI as generative UI) and richer LLM-authored
+surfaces in `crew` mode.

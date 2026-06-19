@@ -31,6 +31,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 
+from agui import a2ui
 from backend.a2a_client import aquery_supplier
 from backend.main import SAMPLE_REQUEST
 from backend.tools import FLIGHT_SUPPLIER_URL, HOTEL_SUPPLIER_URL
@@ -213,4 +214,73 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         yield item
 
 
-RUNNERS = {"demo": demo_runner, "crew": crew_runner}
+# --------------------------------------------------------------------------- #
+# a2ui runner — no LLM; real A2A calls; renders results as A2UI surfaces over
+# AG-UI, with a human-in-the-loop "Confirm & book" gate.
+# --------------------------------------------------------------------------- #
+async def a2ui_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+    tid, rid = agent_input.thread_id, agent_input.run_id
+    req = _trip_request(agent_input)
+    fp = getattr(agent_input, "forwarded_props", None) or {}
+    action = fp.get("action") if isinstance(fp, dict) else None
+    nights = max(1, int(req["days"]) - 1)
+
+    yield RunStartedEvent(thread_id=tid, run_id=rid)
+
+    # --- HITL second leg: the user clicked "Confirm & book" on the plan surface ---
+    if action == "book":
+        async for ev in _stream_text("Confirming your booking with the suppliers…"):
+            yield ev
+        code = "TWX-" + uuid.uuid4().hex[:6].upper()
+        for ev in a2ui.booking_confirmation_surface(fp, code):
+            yield ev
+        yield RunFinishedEvent(thread_id=tid, run_id=rid, result={"booked": True, "code": code})
+        return
+
+    # --- first leg (or a "choose_flight" re-render): research + render the plan ---
+    async for ev in _stream_text(f"Planning your trip to {req['destination']} and rendering it as A2UI…"):
+        yield ev
+
+    yield StepStartedEvent(step_name="research_flights")
+    try:
+        events, flights = await _tool_call(
+            "search_flights",
+            {"origin": req["origin"], "destination": req["destination"],
+             "depart_date": req["start_date"], "travelers": req["travelers"]},
+            FLIGHT_SUPPLIER_URL,
+        )
+    except Exception as e:
+        yield RunErrorEvent(message=f"FlightSupplier unavailable: {e}")
+        return
+    for ev in events:
+        yield ev
+    yield StepFinishedEvent(step_name="research_flights")
+
+    yield StepStartedEvent(step_name="research_hotels")
+    try:
+        events, hotels = await _tool_call(
+            "search_hotels",
+            {"city": req["destination"], "nights": nights, "travelers": req["travelers"]},
+            HOTEL_SUPPLIER_URL,
+        )
+    except Exception as e:
+        yield RunErrorEvent(message=f"HotelSupplier unavailable: {e}")
+        return
+    for ev in events:
+        yield ev
+    yield StepFinishedEvent(step_name="research_hotels")
+
+    # The user may have picked a flight (choose_flight action); else default to cheapest.
+    chosen_airline = fp.get("airline") if isinstance(fp, dict) else None
+    if not chosen_airline:
+        chosen_airline = min(flights["options"], key=lambda o: o["price_per_person"])["airline"]
+    chosen = next(f for f in flights["options"] if f["airline"] == chosen_airline)
+    hotel = {**hotels["options"][0], "nights": nights}
+    total = chosen["price_per_person"] * int(req["travelers"]) + hotel["price_per_night"] * nights
+
+    for ev in a2ui.plan_surface(req, flights["options"], hotel, chosen_airline, total):
+        yield ev
+    yield RunFinishedEvent(thread_id=tid, run_id=rid, result={"surface": a2ui.PLAN_SURFACE})
+
+
+RUNNERS = {"demo": demo_runner, "crew": crew_runner, "a2ui": a2ui_runner}
