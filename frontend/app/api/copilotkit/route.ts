@@ -20,7 +20,13 @@ const copilotRuntime = new CopilotRuntime({
   agents: { tripweaver: new HttpAgent({ url: AGUI_URL }) },
   // Our AG-UI agent already produces the text/tool/A2UI stream, so no LLM
   // service adapter is needed — the empty adapter is the documented choice.
-  a2ui: {}, // enable CopilotKit's native A2UI rendering
+  //
+  // We deliberately do NOT enable the `a2ui: {}` middleware: it consumes the
+  // agent's render_a2ui tool call server-side and renders via react-core's
+  // internal path (which doesn't surface through <CopilotChat> in this empty-
+  // adapter setup). Instead we let the render_a2ui tool call reach the browser
+  // and render it ourselves with useCopilotAction + @copilotkit/a2ui-renderer
+  // (see app/page.tsx).
 })
 
 const serviceAdapter = new ExperimentalEmptyAdapter()
