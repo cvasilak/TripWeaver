@@ -166,6 +166,89 @@ def booking_confirmation_surface(context: dict, code: str) -> list[CustomEvent]:
     return [event(create_surface(BOOKING_SURFACE)), event(update_components(BOOKING_SURFACE, comps))]
 
 
+def trip_plan_surface(plan: dict) -> list[CustomEvent]:
+    """Render a crew-authored TripPlan (backend.models.TripPlan, as a dict) as an
+    A2UI surface: chosen flight, hotel, the full day-by-day itinerary, and a
+    budget verdict — plus the same "Confirm & book" HITL gate.
+
+    Falls back to a plain summary if the crew output didn't parse into a TripPlan
+    (e.g. ``{"raw": "..."}``), so crew mode always renders *something* valid.
+    """
+    comps: list[dict] = []
+    root: list[str] = []
+
+    def add(c: dict) -> str:
+        comps.append(c)
+        return c["id"]
+
+    # Fallback: unparsed / non-TripPlan output.
+    if "itinerary" not in plan:
+        add(text("hdr", "Trip plan", "h2"))
+        add(text("body", str(plan.get("summary") or plan.get("raw") or plan)[:2000], "body"))
+        add(column("root", ["hdr", "body"]))
+        return [event(create_surface(PLAN_SURFACE)), event(update_components(PLAN_SURFACE, comps))]
+
+    cur = plan.get("currency", "EUR")
+    add(text("hdr", str(plan.get("summary") or "Your trip"), "h2"))
+    root.append("hdr")
+
+    # --- Flight ---
+    f = plan.get("selected_flight") or {}
+    add(text("fhdr", "Flight", "h3"))
+    root.append("fhdr")
+    add(text("ft", f"✈ {f.get('airline', '?')} — {f.get('stops', '?')} stop(s), "
+                   f"{f.get('duration_hours', '?')}h, {f.get('price_per_person', '?')} {cur}/pp", "body"))
+    add(text("fw", str(f.get("why", "")), "caption"))
+    add(column("fc", ["ft", "fw"]))
+    add(card("fcard", "fc"))
+    root.append("fcard")
+
+    # --- Hotel ---
+    h = plan.get("selected_hotel") or {}
+    add(text("hhdr", "Hotel", "h3"))
+    root.append("hhdr")
+    add(text("ht", f"\U0001f3e8 {h.get('name', '?')} — {h.get('area', '?')}", "body"))
+    add(text("hm", f"{h.get('price_per_night', '?')} {cur}/night × {h.get('nights', '?')} nights", "caption"))
+    add(text("hw", str(h.get("why", "")), "caption"))
+    add(column("hc", ["ht", "hm", "hw"]))
+    add(card("hcard", "hc"))
+    root.append("hcard")
+
+    # --- Itinerary (one card per day) ---
+    add(text("ihdr", "Itinerary", "h3"))
+    root.append("ihdr")
+    for idx, day in enumerate(plan.get("itinerary", [])):
+        p = f"d{idx}"
+        child_ids = [f"{p}t", f"{p}am", f"{p}pm", f"{p}ev", f"{p}c"]
+        add(text(f"{p}t", f"Day {day.get('day', idx + 1)}: {day.get('title', '')}", "body"))
+        add(text(f"{p}am", f"AM: {day.get('morning', '')}", "caption"))
+        add(text(f"{p}pm", f"PM: {day.get('afternoon', '')}", "caption"))
+        add(text(f"{p}ev", f"EVE: {day.get('evening', '')}", "caption"))
+        add(text(f"{p}c", f"~{day.get('estimated_cost', '?')} {cur}/pp", "caption"))
+        add(column(f"{p}col", child_ids))
+        add(card(p, f"{p}col"))
+        root.append(p)
+
+    # --- Budget verdict ---
+    add(divider("div"))
+    root.append("div")
+    verdict = "✅ Within budget" if plan.get("within_budget") else "⚠ Over budget"
+    add(text("btot", f"{verdict} — est. {plan.get('estimated_total', '?')} {cur} "
+                     f"vs budget {plan.get('budget', '?')} {cur}", "body"))
+    add(text("bnotes", str(plan.get("budget_notes", "")), "caption"))
+    root += ["btot", "bnotes"]
+
+    # --- HITL book gate ---
+    add(text("bookbl", "Confirm & book"))
+    add(button("book", "bookbl", "book",
+               {"airline": f.get("airline", ""), "hotel": h.get("name", ""),
+                "total": plan.get("estimated_total", ""), "currency": cur}, primary=True))
+    root.append("book")
+
+    add(column("root", root, distribution="start"))
+    return [event(create_surface(PLAN_SURFACE)), event(update_components(PLAN_SURFACE, comps))]
+
+
 def _itinerary_lines(req: dict) -> list[str]:
     """A tiny deterministic itinerary (no LLM) — ?mode=crew produces the real one."""
     interests = str(req.get("interests", "")).lower()

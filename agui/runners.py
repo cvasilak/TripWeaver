@@ -218,6 +218,10 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
                 return
             plan = getattr(payload, "pydantic", None)
             snapshot = plan.model_dump() if plan is not None else {"raw": str(getattr(payload, "raw", payload))}
+            # Render the crew's structured TripPlan as an A2UI surface (cards),
+            # then keep the raw plan in shared state for non-A2UI consumers.
+            for ev in a2ui.trip_plan_surface(snapshot):
+                yield ev
             yield StateSnapshotEvent(snapshot={"plan": snapshot})
             yield RunFinishedEvent(thread_id=tid, run_id=rid, result=snapshot)
             return
