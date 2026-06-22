@@ -178,6 +178,8 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     def emit(event: BaseEvent) -> None:
         loop.call_soon_threadsafe(queue.put_nowait, event)
 
+    step_seq = 0
+
     def task_callback(output: Any) -> None:
         mid = _id()
         text = str(getattr(output, "raw", None) or output)[:4000]
@@ -186,8 +188,16 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         emit(TextMessageEndEvent(message_id=mid))
 
     def step_callback(step: Any) -> None:
+        # AG-UI requires STEP_STARTED to be matched by STEP_FINISHED and never
+        # re-started while still active. CrewAI fires this per step with repeating
+        # labels (AgentAction/AgentFinish), so emit a unique, self-contained pair
+        # — otherwise two STEP_STARTED "AgentFinish" collide ("already active").
+        nonlocal step_seq
+        step_seq += 1
         label = getattr(step, "tool", None) or type(step).__name__
-        emit(StepStartedEvent(step_name=str(label)[:60]))
+        name = f"{str(label)[:48]} #{step_seq}"
+        emit(StepStartedEvent(step_name=name))
+        emit(StepFinishedEvent(step_name=name))
 
     def run() -> None:
         try:
