@@ -18,13 +18,31 @@ bindings into the surface data model.
 
 from __future__ import annotations
 
+import json
+import os
+import uuid
 from typing import Any
 
-from ag_ui.core import CustomEvent
+from ag_ui.core import (
+    BaseEvent,
+    CustomEvent,
+    ToolCallArgsEvent,
+    ToolCallEndEvent,
+    ToolCallResultEvent,
+    ToolCallStartEvent,
+)
 from crewai.a2a.extensions.a2ui.validator import validate_a2ui_message_v09
 
 A2UI_CATALOG_ID = "https://a2ui.org/specification/v0_9/basic_catalog.json"
 A2UI_EVENT_NAME = "a2ui"
+
+# How A2UI reaches the frontend. Two consumers, two carriers:
+#   "custom" — AG-UI CUSTOM events (name "a2ui"); read by our bundled vanilla
+#              renderer (agui/static/index.html and the copilotkit branch).
+#   "tool"   — a "render_a2ui" tool call; what CopilotKit's native A2UI middleware
+#              (@ag-ui/a2ui-middleware) consumes to render surfaces in <CopilotChat>.
+# Set TRIPWEAVER_A2UI_CARRIER=tool when serving the full CopilotKit app.
+A2UI_RENDER_TOOL = "render_a2ui"
 
 
 # --- message envelopes (validated) ---------------------------------------- #
@@ -50,6 +68,58 @@ def update_components(surface_id: str, components: list[dict]) -> dict[str, Any]
 
 def update_data(surface_id: str, path: str, value: Any) -> dict[str, Any]:
     return {"version": "v0.9", "updateDataModel": {"surfaceId": surface_id, "path": path, "value": value}}
+
+
+# --- carrier: CUSTOM events vs a render_a2ui tool call --------------------- #
+def emit_surface(messages: list[CustomEvent]) -> list[BaseEvent]:
+    """Turn a surface (list of validated CUSTOM-event A2UI messages) into the
+    AG-UI events to actually emit, per the configured carrier. The surface
+    builders always produce CUSTOM events; this adapts them for CopilotKit when
+    ``TRIPWEAVER_A2UI_CARRIER=tool``."""
+    if os.getenv("TRIPWEAVER_A2UI_CARRIER", "custom").lower() == "tool":
+        return _to_render_tool(messages)
+    return list(messages)
+
+
+def _ptr_set(obj: dict, pointer: str, value: Any) -> None:
+    if not pointer or pointer == "/":
+        return
+    parts = pointer.split("/")[1:]
+    node = obj
+    for p in parts[:-1]:
+        node = node.setdefault(p, {})
+    node[parts[-1]] = value
+
+
+def _to_render_tool(messages: list[CustomEvent]) -> list[BaseEvent]:
+    """Repackage createSurface/updateComponents/updateDataModel messages as a
+    single ``render_a2ui`` tool call (surfaceId + flat components + initial data)
+    — the shape CopilotKit's A2UI middleware renders."""
+    surface_id: str | None = None
+    components: list[dict] = []
+    data: dict[str, Any] = {}
+    for ev in messages:
+        v = ev.value
+        if "createSurface" in v:
+            surface_id = v["createSurface"]["surfaceId"]
+        elif "updateComponents" in v:
+            surface_id = surface_id or v["updateComponents"]["surfaceId"]
+            components = v["updateComponents"]["components"]
+        elif "updateDataModel" in v:
+            _ptr_set(data, v["updateDataModel"].get("path", "/"), v["updateDataModel"].get("value"))
+    args: dict[str, Any] = {"surfaceId": surface_id, "components": components}
+    if data:
+        args["data"] = data
+    tc = uuid.uuid4().hex
+    # The middleware renders the surface when it sees the tool-call RESULT (it
+    # then emits an ACTIVITY_SNAPSHOT the renderer consumes); without the result
+    # the args are buffered but never rendered.
+    return [
+        ToolCallStartEvent(tool_call_id=tc, tool_call_name=A2UI_RENDER_TOOL),
+        ToolCallArgsEvent(tool_call_id=tc, delta=json.dumps(args)),
+        ToolCallEndEvent(tool_call_id=tc),
+        ToolCallResultEvent(message_id=uuid.uuid4().hex, tool_call_id=tc, content="{}", role="tool"),
+    ]
 
 
 # --- component helpers ----------------------------------------------------- #

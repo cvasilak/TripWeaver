@@ -182,9 +182,14 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
 
     def task_callback(output: Any) -> None:
         mid = _id()
-        text = str(getattr(output, "raw", None) or output)[:4000]
+        text = str(getattr(output, "raw", None) or output).strip()
+        # The final task's output is the structured TripPlan (JSON, via
+        # output_pydantic). Don't dump raw JSON into the chat — the A2UI surface
+        # renders it. Researcher tasks output natural language, which we stream.
+        if text.startswith(("{", "[")):
+            text = "Finalizing your trip plan…"
         emit(TextMessageStartEvent(message_id=mid, role="assistant"))
-        emit(TextMessageContentEvent(message_id=mid, delta=text))
+        emit(TextMessageContentEvent(message_id=mid, delta=text[:4000]))
         emit(TextMessageEndEvent(message_id=mid))
 
     def step_callback(step: Any) -> None:
@@ -220,7 +225,7 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
             snapshot = plan.model_dump() if plan is not None else {"raw": str(getattr(payload, "raw", payload))}
             # Render the crew's structured TripPlan as an A2UI surface (cards),
             # then keep the raw plan in shared state for non-A2UI consumers.
-            for ev in a2ui.trip_plan_surface(snapshot):
+            for ev in a2ui.emit_surface(a2ui.trip_plan_surface(snapshot)):
                 yield ev
             yield StateSnapshotEvent(snapshot={"plan": snapshot})
             yield RunFinishedEvent(thread_id=tid, run_id=rid, result=snapshot)
@@ -246,7 +251,7 @@ async def a2ui_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         async for ev in _stream_text("Confirming your booking with the suppliers…"):
             yield ev
         code = "TWX-" + uuid.uuid4().hex[:6].upper()
-        for ev in a2ui.booking_confirmation_surface(fp, code):
+        for ev in a2ui.emit_surface(a2ui.booking_confirmation_surface(fp, code)):
             yield ev
         yield RunFinishedEvent(thread_id=tid, run_id=rid, result={"booked": True, "code": code})
         return
@@ -292,7 +297,7 @@ async def a2ui_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     hotel = {**hotels["options"][0], "nights": nights}
     total = chosen["price_per_person"] * int(req["travelers"]) + hotel["price_per_night"] * nights
 
-    for ev in a2ui.plan_surface(req, flights["options"], hotel, chosen_airline, total):
+    for ev in a2ui.emit_surface(a2ui.plan_surface(req, flights["options"], hotel, chosen_airline, total)):
         yield ev
     yield RunFinishedEvent(thread_id=tid, run_id=rid, result={"surface": a2ui.PLAN_SURFACE})
 
