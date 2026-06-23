@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { CopilotKit, useCopilotAction } from '@copilotkit/react-core'
 import { CopilotChat } from '@copilotkit/react-ui'
 import '@copilotkit/react-ui/styles.css'
@@ -76,6 +76,172 @@ function RegisterAgentStep() {
   return null
 }
 
+type FlightOption = {
+  ref?: string
+  airline?: string
+  stops?: number
+  duration_hours?: number
+  price_per_person?: number
+  why?: string
+}
+type HotelOption = {
+  ref?: string
+  name?: string
+  area?: string
+  price_per_night?: number
+  why?: string
+}
+
+// The human-in-the-loop picker. The backend's research crew hands us ranked
+// flight + hotel options via a `select_options` tool call and waits; the traveler
+// picks one of each and we send the chosen objects back via respond(). The crew's
+// planning phase then builds the itinerary around that choice (a follow-up run).
+function SelectOptions({
+  flights,
+  hotels,
+  status,
+  respond,
+}: {
+  flights: FlightOption[]
+  hotels: HotelOption[]
+  status: string
+  respond?: (result: unknown) => void
+}) {
+  const [flightRef, setFlightRef] = useState<string | null>(null)
+  const [hotelRef, setHotelRef] = useState<string | null>(null)
+  const [submitted, setSubmitted] = useState<{ flight?: FlightOption; hotel?: HotelOption } | null>(null)
+
+  const keyOf = (o: FlightOption | HotelOption, i: number) => o.ref ?? String(i)
+  const chosenFlight = flights.find((f, i) => keyOf(f, i) === flightRef)
+  const chosenHotel = hotels.find((h, i) => keyOf(h, i) === hotelRef)
+  const canSubmit = status === 'executing' && !!chosenFlight && !!chosenHotel && !!respond
+
+  // After respond(), the action re-renders as "complete"; show what was booked-in.
+  if (status === 'complete' || submitted) {
+    const f = submitted?.flight ?? chosenFlight
+    const h = submitted?.hotel ?? chosenHotel
+    return (
+      <div className="tw-pick tw-pick-done">
+        <span className="tw-dot-done" aria-hidden />
+        <span>
+          Selected{f ? ` ${f.airline}` : ''}
+          {h ? ` · ${h.name}` : ''} — planning your itinerary…
+        </span>
+      </div>
+    )
+  }
+
+  if (!flights.length && !hotels.length) {
+    return (
+      <div className="tw-pick">
+        <div className="tw-agent-step">
+          <span className="tw-spinner" aria-hidden />
+          <span>Gathering your options…</span>
+        </div>
+      </div>
+    )
+  }
+
+  const submit = () => {
+    if (!canSubmit) return
+    setSubmitted({ flight: chosenFlight, hotel: chosenHotel })
+    respond?.({ flight: chosenFlight, hotel: chosenHotel })
+  }
+
+  return (
+    <div className="tw-pick">
+      <h3 className="tw-pick-title">Choose your flight</h3>
+      <div className="tw-opts">
+        {flights.map((f, i) => {
+          const k = keyOf(f, i)
+          return (
+            <button
+              type="button"
+              key={k}
+              className={`tw-opt${flightRef === k ? ' tw-opt-sel' : ''}`}
+              onClick={() => setFlightRef(k)}
+              aria-pressed={flightRef === k}
+            >
+              <span className="tw-radio" aria-hidden />
+              <span className="tw-opt-body">
+                <span className="tw-opt-head">
+                  <span className="tw-opt-name">{f.airline ?? 'Flight'}</span>
+                  {f.price_per_person != null && (
+                    <span className="tw-opt-price">{f.price_per_person} /pp</span>
+                  )}
+                </span>
+                <span className="tw-opt-meta">
+                  {[
+                    f.stops != null ? (f.stops === 0 ? 'nonstop' : `${f.stops} stop${f.stops > 1 ? 's' : ''}`) : null,
+                    f.duration_hours != null ? `${f.duration_hours}h` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+                {f.why && <span className="tw-opt-why">{f.why}</span>}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      <h3 className="tw-pick-title">Choose your hotel</h3>
+      <div className="tw-opts">
+        {hotels.map((h, i) => {
+          const k = keyOf(h, i)
+          return (
+            <button
+              type="button"
+              key={k}
+              className={`tw-opt${hotelRef === k ? ' tw-opt-sel' : ''}`}
+              onClick={() => setHotelRef(k)}
+              aria-pressed={hotelRef === k}
+            >
+              <span className="tw-radio" aria-hidden />
+              <span className="tw-opt-body">
+                <span className="tw-opt-head">
+                  <span className="tw-opt-name">{h.name ?? 'Hotel'}</span>
+                  {h.price_per_night != null && (
+                    <span className="tw-opt-price">{h.price_per_night} /night</span>
+                  )}
+                </span>
+                <span className="tw-opt-meta">{h.area ?? ''}</span>
+                {h.why && <span className="tw-opt-why">{h.why}</span>}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      <button type="button" className="tw-pick-go" onClick={submit} disabled={!canSubmit}>
+        {chosenFlight && chosenHotel ? 'Plan my trip with these' : 'Pick a flight and a hotel'}
+      </button>
+    </div>
+  )
+}
+
+// Register the select_options tool as a human-in-the-loop action: it renders the
+// picker and waits for the traveler's response (respond), which the agent reads
+// on its next run.
+function RegisterSelectOptions() {
+  useCopilotAction({
+    name: 'select_options',
+    available: 'disabled',
+    renderAndWaitForResponse: ({ status, args, respond }) => {
+      const a = (args ?? {}) as { flights?: FlightOption[]; hotels?: HotelOption[] }
+      return (
+        <SelectOptions
+          flights={Array.isArray(a.flights) ? a.flights : []}
+          hotels={Array.isArray(a.hotels) ? a.hotels : []}
+          status={status}
+          respond={respond as ((result: unknown) => void) | undefined}
+        />
+      )
+    },
+  })
+  return null
+}
+
 export default function Home() {
   return (
     <CopilotKit runtimeUrl="/api/copilotkit" agent="tripweaver">
@@ -90,6 +256,7 @@ export default function Home() {
           </header>
           <RegisterA2UIRenderer />
           <RegisterAgentStep />
+          <RegisterSelectOptions />
           <div className="chat">
             <CopilotChat
               labels={{

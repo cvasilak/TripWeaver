@@ -4,6 +4,7 @@
   --ink: #e7ecf5;
   --muted: #8aa0c0;
   --accent: #5db0ff;
+  --good: #34d399;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -91,3 +92,42 @@ body {
 }
 .tw-dot-done { width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--good); display: inline-block; }
 @keyframes tw-spin { to { transform: rotate(360deg); } }
+
+/* "Pick your flight & hotel" human-in-the-loop picker (select_options action).
+   Same light "card panel" look as .tw-a2ui so it reads on the dark chat. */
+.tw-pick {
+  background: #f6f8fc;
+  color: #0f1422;
+  border: 1px solid #d7deea;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin: 8px 0;
+}
+.tw-pick-title { font-size: 13px; font-weight: 700; margin: 4px 0 8px; color: #0f1422; }
+.tw-opts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.tw-opt {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left;
+  background: #ffffff; border: 1px solid #d7deea; border-radius: 10px;
+  padding: 10px 12px; cursor: pointer; color: #0f1422; font: inherit;
+  transition: border-color .12s, box-shadow .12s;
+}
+.tw-opt:hover { border-color: #9fb6da; }
+.tw-opt-sel { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18); }
+.tw-radio {
+  width: 16px; height: 16px; flex: none; margin-top: 2px; border-radius: 50%;
+  border: 2px solid #9fb6da; background: #fff;
+}
+.tw-opt-sel .tw-radio { border-color: #2563eb; background: radial-gradient(#2563eb 0 38%, #fff 42% 100%); }
+.tw-opt-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.tw-opt-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.tw-opt-name { font-weight: 600; }
+.tw-opt-price { font-weight: 700; white-space: nowrap; }
+.tw-opt-meta { color: #4a5b78; font-size: 12px; }
+.tw-opt-why { color: #5b6b86; font-size: 12px; font-style: italic; }
+.tw-pick-go {
+  width: 100%; background: #2563eb; color: #fff; border: none; border-radius: 8px;
+  padding: 10px 16px; font-weight: 600; cursor: pointer;
+}
+.tw-pick-go:hover:not(:disabled) { background: #1d4ed8; }
+.tw-pick-go:disabled { background: #aebfdc; cursor: not-allowed; }
+.tw-pick-done { display: flex; align-items: center; gap: 8px; }
