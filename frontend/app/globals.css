@@ -143,3 +143,21 @@ body {
 .tw-pick-go:hover:not(:disabled) { background: #1d4ed8; }
 .tw-pick-go:disabled { background: #aebfdc; cursor: not-allowed; }
 .tw-pick-done { display: flex; align-items: center; gap: 8px; }
+
+/* "Confirm your booking" gate (confirm_booking action). */
+.tw-confirm {
+  background: #f6f8fc; color: #0f1422; border: 1px solid #d7deea;
+  border-radius: 12px; padding: 14px 16px; margin: 8px 0;
+}
+.tw-confirm-sum { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 14px; }
+.tw-confirm-sum > div { display: flex; justify-content: space-between; gap: 12px; }
+.tw-confirm-lbl { color: #4a5b78; font-size: 12px; font-weight: 600; }
+.tw-confirm-btns { display: flex; gap: 8px; }
+.tw-confirm-btns .tw-pick-go { flex: 1; }
+.tw-confirm-no {
+  background: #ffffff; color: #33415c; border: 1px solid #c4cfe0; border-radius: 8px;
+  padding: 10px 16px; font-weight: 600; cursor: pointer;
+}
+.tw-confirm-no:hover:not(:disabled) { background: #eef2f9; }
+.tw-confirm-no:disabled { opacity: .6; cursor: not-allowed; }
+.tw-confirm-done { display: flex; align-items: center; gap: 8px; }

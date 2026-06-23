@@ -266,6 +266,111 @@ function RegisterSelectOptions() {
   return null
 }
 
+// The final human-in-the-loop gate: after the TripPlan renders, the crew asks the
+// traveler to confirm the booking. On confirm we echo the booking summary back via
+// respond(); the agent's next run places the reservations (booking crew).
+function ConfirmBooking({
+  flight,
+  hotel,
+  total,
+  currency,
+  status,
+  respond,
+}: {
+  flight: FlightOption
+  hotel: HotelOption
+  total?: number
+  currency?: string
+  status: string
+  respond?: (result: unknown) => void
+}) {
+  const [done, setDone] = useState<'confirmed' | 'declined' | null>(null)
+  const canAct = status === 'executing' && !!respond
+
+  if (status === 'complete' || done) {
+    const declined = done === 'declined'
+    return (
+      <div className="tw-confirm tw-confirm-done">
+        {!declined && <span className="tw-dot-done" aria-hidden />}
+        <span>
+          {declined
+            ? 'No booking made — tell me what you’d like to change.'
+            : 'Confirmed — placing your reservations…'}
+        </span>
+      </div>
+    )
+  }
+
+  const confirm = () => {
+    if (!canAct) return
+    setDone('confirmed')
+    respond?.({ confirmed: true, booking: { flight, hotel, total, currency } })
+  }
+  const decline = () => {
+    if (!canAct) return
+    setDone('declined')
+    respond?.({ confirmed: false })
+  }
+
+  return (
+    <div className="tw-confirm">
+      <h3 className="tw-pick-title">Confirm your booking</h3>
+      <div className="tw-confirm-sum">
+        <div>
+          <span className="tw-confirm-lbl">Flight</span>
+          <span>{flight?.airline ?? '—'}</span>
+        </div>
+        <div>
+          <span className="tw-confirm-lbl">Hotel</span>
+          <span>{hotel?.name ?? '—'}</span>
+        </div>
+        {total != null && (
+          <div>
+            <span className="tw-confirm-lbl">Total</span>
+            <span>
+              {total} {currency}
+            </span>
+          </div>
+        )}
+      </div>
+      <div className="tw-confirm-btns">
+        <button type="button" className="tw-pick-go" onClick={confirm} disabled={!canAct}>
+          Confirm Booking
+        </button>
+        <button type="button" className="tw-confirm-no" onClick={decline} disabled={!canAct}>
+          Not now
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function RegisterConfirmBooking() {
+  useCopilotAction({
+    name: 'confirm_booking',
+    available: 'disabled',
+    renderAndWaitForResponse: ({ status, args, respond }) => {
+      const a = (args ?? {}) as {
+        flight?: FlightOption
+        hotel?: HotelOption
+        total?: number
+        currency?: string
+      }
+      return (
+        <ConfirmBooking
+          flight={a.flight ?? {}}
+          hotel={a.hotel ?? {}}
+          total={a.total}
+          currency={a.currency ?? 'EUR'}
+          status={status}
+          respond={respond as ((result: unknown) => void) | undefined}
+        />
+      )
+    },
+  })
+  return null
+}
+
 export default function Home() {
   return (
     <CopilotKit runtimeUrl="/api/copilotkit" agent="tripweaver">
@@ -281,6 +386,7 @@ export default function Home() {
           <RegisterA2UIRenderer />
           <RegisterAgentStep />
           <RegisterSelectOptions />
+          <RegisterConfirmBooking />
           <div className="chat">
             <CopilotChat
               labels={{
