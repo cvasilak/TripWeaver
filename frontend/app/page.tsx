@@ -92,6 +92,22 @@ type HotelOption = {
   why?: string
 }
 
+// A gold "medal" badge marking the crew's #1 ranked option. The research crew
+// returns each list in ranked order (best first), so the first card gets this.
+function BestBadge() {
+  return (
+    <span className="tw-best" title="Ranked #1 by the crew">
+      <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden focusable="false">
+        <path
+          fill="currentColor"
+          d="M12 2l2.9 6.1 6.6.9-4.8 4.6 1.2 6.6L12 17.8 6.1 20.8l1.2-6.6L2.5 9l6.6-.9z"
+        />
+      </svg>
+      AI&rsquo;s top pick
+    </span>
+  )
+}
+
 // The human-in-the-loop picker. The backend's research crew hands us ranked
 // flight + hotel options via a `select_options` tool call and waits; the traveler
 // picks one of each and we send the chosen objects back via respond(). The crew's
@@ -154,18 +170,22 @@ function SelectOptions({
       <div className="tw-opts">
         {flights.map((f, i) => {
           const k = keyOf(f, i)
+          const isBest = i === 0
           return (
             <button
               type="button"
               key={k}
-              className={`tw-opt${flightRef === k ? ' tw-opt-sel' : ''}`}
+              className={`tw-opt${isBest ? ' tw-opt-best' : ''}${flightRef === k ? ' tw-opt-sel' : ''}`}
               onClick={() => setFlightRef(k)}
               aria-pressed={flightRef === k}
             >
               <span className="tw-radio" aria-hidden />
               <span className="tw-opt-body">
                 <span className="tw-opt-head">
-                  <span className="tw-opt-name">{f.airline ?? 'Flight'}</span>
+                  <span className="tw-opt-headl">
+                    <span className="tw-opt-name">{f.airline ?? 'Flight'}</span>
+                    {isBest && <BestBadge />}
+                  </span>
                   {f.price_per_person != null && (
                     <span className="tw-opt-price">{f.price_per_person} /pp</span>
                   )}
@@ -189,18 +209,22 @@ function SelectOptions({
       <div className="tw-opts">
         {hotels.map((h, i) => {
           const k = keyOf(h, i)
+          const isBest = i === 0
           return (
             <button
               type="button"
               key={k}
-              className={`tw-opt${hotelRef === k ? ' tw-opt-sel' : ''}`}
+              className={`tw-opt${isBest ? ' tw-opt-best' : ''}${hotelRef === k ? ' tw-opt-sel' : ''}`}
               onClick={() => setHotelRef(k)}
               aria-pressed={hotelRef === k}
             >
               <span className="tw-radio" aria-hidden />
               <span className="tw-opt-body">
                 <span className="tw-opt-head">
-                  <span className="tw-opt-name">{h.name ?? 'Hotel'}</span>
+                  <span className="tw-opt-headl">
+                    <span className="tw-opt-name">{h.name ?? 'Hotel'}</span>
+                    {isBest && <BestBadge />}
+                  </span>
                   {h.price_per_night != null && (
                     <span className="tw-opt-price">{h.price_per_night} /night</span>
                   )}

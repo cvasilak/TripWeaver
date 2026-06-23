@@ -112,6 +112,9 @@ body {
   transition: border-color .12s, box-shadow .12s;
 }
 .tw-opt:hover { border-color: #9fb6da; }
+/* The crew's #1 ranked option: subtle gold accent (the blue selected state below
+   wins when this card is also chosen). */
+.tw-opt-best { border-color: #f3c969; background: #fffdf5; }
 .tw-opt-sel { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18); }
 .tw-radio {
   width: 16px; height: 16px; flex: none; margin-top: 2px; border-radius: 50%;
@@ -120,7 +123,16 @@ body {
 .tw-opt-sel .tw-radio { border-color: #2563eb; background: radial-gradient(#2563eb 0 38%, #fff 42% 100%); }
 .tw-opt-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .tw-opt-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.tw-opt-headl { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .tw-opt-name { font-weight: 600; }
+/* "AI's top pick" gold medal badge. */
+.tw-best {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #fef3c7; color: #92400e; border: 1px solid #f59e0b;
+  border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 700;
+  line-height: 1.6; white-space: nowrap;
+}
+.tw-best svg { color: #f59e0b; }
 .tw-opt-price { font-weight: 700; white-space: nowrap; }
 .tw-opt-meta { color: #4a5b78; font-size: 12px; }
 .tw-opt-why { color: #5b6b86; font-size: 12px; font-style: italic; }
