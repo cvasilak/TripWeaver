@@ -29,6 +29,39 @@ class HotelChoice(BaseModel):
     why: str = Field(description="One line on why this hotel was chosen.")
 
 
+class FlightOption(BaseModel):
+    """One flight candidate the traveler can pick from.
+
+    The research crew emits a ranked list of these (``FlightOptions``); the human
+    picks one in the UI, and the chosen option is fed into the planning crew.
+    """
+
+    ref: str = Field(description="Short stable id for this option, e.g. 'F1'.")
+    airline: str
+    stops: int
+    duration_hours: float
+    price_per_person: float
+    why: str = Field(description="One line on why this option is worth considering.")
+
+
+class FlightOptions(BaseModel):
+    options: list[FlightOption]
+
+
+class HotelOption(BaseModel):
+    """One hotel candidate the traveler can pick from."""
+
+    ref: str = Field(description="Short stable id for this option, e.g. 'H1'.")
+    name: str
+    area: str
+    price_per_night: float
+    why: str = Field(description="One line on why this option is worth considering.")
+
+
+class HotelOptions(BaseModel):
+    options: list[HotelOption]
+
+
 class ItineraryDay(BaseModel):
     day: int
     title: str = Field(description="Short theme for the day, e.g. 'Arrival & Shibuya'.")

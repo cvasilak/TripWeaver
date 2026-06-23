@@ -5,6 +5,17 @@ ideas (roles, tools, tasks, and context flowing from one task to the next).
 Each researcher feeds the Itinerary Designer, who feeds the Budget Auditor, who
 emits the final structured TripPlan.
 
+For the **human-in-the-loop** flow the crew is split into two cooperating crews:
+
+* ``build_research_crew()`` — the Flight/Hotel Researchers produce a *ranked list
+  of pickable options* (structured ``FlightOptions`` / ``HotelOptions``).
+* ``build_planning_crew()`` — once the traveler has picked one flight and one
+  hotel, the Activities Curator, Itinerary Designer, and Budget Auditor plan the
+  trip *around that choice* (the pick is injected via ``kickoff`` inputs).
+
+``build_crew()`` keeps the original single autonomous run (used by the CLI),
+where the crew picks the flight and hotel itself.
+
 (A hierarchical process with a delegating "Concierge" manager is a natural
 upgrade — see the README — but sequential is more predictable and cheaper to
 run while you're learning.)
@@ -15,21 +26,12 @@ from __future__ import annotations
 from crewai import Agent, Crew, Process, Task
 
 from .config import get_llm
-from .models import TripPlan
+from .models import FlightOptions, HotelOptions, TripPlan
 from .tools import search_activities, search_flights, search_hotels
 
 
-def build_crew(step_callback=None, task_callback=None) -> Crew:
-    """Build the TripWeaver crew.
-
-    ``step_callback`` / ``task_callback`` are optional hooks CrewAI invokes during
-    a run (per agent step, and per completed task). Phase 3's AG-UI server passes
-    them to translate live crew activity into AG-UI events; left unset, behavior
-    is identical to Phases 1-2.
-    """
-    llm = get_llm()
-
-    # ---- Agents (the "who") ------------------------------------------------
+def _build_agents(llm) -> dict[str, Agent]:
+    """The five role-based agents, shared by every crew variant."""
     flight_researcher = Agent(
         role="Flight Researcher",
         goal="Find the best-value flights that fit the traveler's dates and budget.",
@@ -93,34 +95,54 @@ def build_crew(step_callback=None, task_callback=None) -> Crew:
         verbose=True,
     )
 
-    # ---- Tasks (the "what", in order) -------------------------------------
-    research_flights = Task(
+    return {
+        "flight_researcher": flight_researcher,
+        "hotel_researcher": hotel_researcher,
+        "activities_curator": activities_curator,
+        "itinerary_designer": itinerary_designer,
+        "budget_auditor": budget_auditor,
+    }
+
+
+# ---- Task builders (reused across crew variants) --------------------------
+def _research_flights_task(agent: Agent) -> Task:
+    return Task(
         description=(
             "Find flight options from {origin} to {destination} for {travelers} traveler(s), "
             "departing {start_date} for a {days}-day trip. Use the Search Flights tool, then "
-            "compare the options on price, duration, and stops. Recommend the best 2-3."
+            "compare the options on price, duration, and stops. Recommend the best 2-3 so the "
+            "traveler can pick one."
         ),
         expected_output=(
-            "A short ranked list of 2-3 flights: airline, price per person in {currency}, "
-            "total duration, stops, and a one-line reason for the ranking."
+            "A ranked list of 2-3 flight options. For EACH option set: ref (a short stable id "
+            "like 'F1', 'F2', in ranked order), airline, stops, duration_hours, "
+            "price_per_person in {currency}, and a one-line 'why'."
         ),
-        agent=flight_researcher,
+        agent=agent,
+        output_pydantic=FlightOptions,
     )
 
-    research_hotels = Task(
+
+def _research_hotels_task(agent: Agent) -> Task:
+    return Task(
         description=(
             "Find hotels in {destination} for {travelers} traveler(s) for {days} nights that "
             "suit a trip themed around these interests: {interests}, and a total budget near "
-            "{budget} {currency}. Use the Search Hotels tool and compare options."
+            "{budget} {currency}. Use the Search Hotels tool and compare options so the traveler "
+            "can pick one."
         ),
         expected_output=(
-            "A ranked list of 2-3 hotels: name, neighborhood, price per night in {currency}, "
-            "estimated total for the stay, and a one-line reason."
+            "A ranked list of 2-3 hotel options. For EACH option set: ref (a short stable id "
+            "like 'H1', 'H2', in ranked order), name, area (neighborhood), price_per_night in "
+            "{currency}, and a one-line 'why'."
         ),
-        agent=hotel_researcher,
+        agent=agent,
+        output_pydantic=HotelOptions,
     )
 
-    research_activities = Task(
+
+def _research_activities_task(agent: Agent) -> Task:
+    return Task(
         description=(
             "Suggest activities and experiences in {destination} that match these interests: "
             "{interests}, for a {days}-day trip. Use the Search Activities tool."
@@ -129,8 +151,24 @@ def build_crew(step_callback=None, task_callback=None) -> Crew:
             "A list of recommended activities: name, category, duration, and price per person "
             "in {currency}."
         ),
-        agent=activities_curator,
+        agent=agent,
     )
+
+
+def build_crew(step_callback=None, task_callback=None) -> Crew:
+    """Build the full autonomous TripWeaver crew (the crew picks flight + hotel).
+
+    Used by the CLI (``backend.main``). ``step_callback`` / ``task_callback`` are
+    optional hooks CrewAI invokes during a run (per agent step, and per completed
+    task); the AG-UI server passes them to translate live crew activity into AG-UI
+    events. Left unset, behavior is identical to Phases 1-2.
+    """
+    llm = get_llm()
+    a = _build_agents(llm)
+
+    research_flights = _research_flights_task(a["flight_researcher"])
+    research_hotels = _research_hotels_task(a["hotel_researcher"])
+    research_activities = _research_activities_task(a["activities_curator"])
 
     design_itinerary = Task(
         description=(
@@ -145,7 +183,7 @@ def build_crew(step_callback=None, task_callback=None) -> Crew:
             "plus the single chosen flight and hotel with reasons, and a rough running total."
         ),
         context=[research_flights, research_hotels, research_activities],
-        agent=itinerary_designer,
+        agent=a["itinerary_designer"],
     )
 
     audit_budget = Task(
@@ -163,17 +201,17 @@ def build_crew(step_callback=None, task_callback=None) -> Crew:
             "within_budget, and budget_notes."
         ),
         context=[design_itinerary],
-        agent=budget_auditor,
+        agent=a["budget_auditor"],
         output_pydantic=TripPlan,
     )
 
     return Crew(
         agents=[
-            flight_researcher,
-            hotel_researcher,
-            activities_curator,
-            itinerary_designer,
-            budget_auditor,
+            a["flight_researcher"],
+            a["hotel_researcher"],
+            a["activities_curator"],
+            a["itinerary_designer"],
+            a["budget_auditor"],
         ],
         tasks=[
             research_flights,
@@ -182,6 +220,93 @@ def build_crew(step_callback=None, task_callback=None) -> Crew:
             design_itinerary,
             audit_budget,
         ],
+        process=Process.sequential,
+        verbose=True,
+        step_callback=step_callback,
+        task_callback=task_callback,
+    )
+
+
+def build_research_crew(step_callback=None, task_callback=None) -> Crew:
+    """Phase-1 crew for the human-in-the-loop flow: produce *pickable* options.
+
+    The Flight and Hotel Researchers each emit a ranked list of structured options
+    (``FlightOptions`` / ``HotelOptions``). After ``kickoff`` the caller reads the
+    two task outputs (``result.tasks_output[i].pydantic``) and presents them to the
+    traveler to choose from — the crew deliberately does NOT pick for them here.
+    """
+    llm = get_llm()
+    a = _build_agents(llm)
+
+    return Crew(
+        agents=[a["flight_researcher"], a["hotel_researcher"]],
+        tasks=[
+            _research_flights_task(a["flight_researcher"]),
+            _research_hotels_task(a["hotel_researcher"]),
+        ],
+        process=Process.sequential,
+        verbose=True,
+        step_callback=step_callback,
+        task_callback=task_callback,
+    )
+
+
+def build_planning_crew(step_callback=None, task_callback=None) -> Crew:
+    """Phase-2 crew for the human-in-the-loop flow: plan around the human's pick.
+
+    The traveler has already chosen one flight and one hotel; pass them in via
+    ``kickoff`` inputs as the ``chosen_flight`` and ``chosen_hotel`` keys (readable
+    JSON/text). The Itinerary Designer builds the plan *around* those choices
+    (it does not re-pick), and the Budget Auditor emits the final ``TripPlan``.
+    """
+    llm = get_llm()
+    a = _build_agents(llm)
+
+    research_activities = _research_activities_task(a["activities_curator"])
+
+    design_itinerary = Task(
+        description=(
+            "The traveler has ALREADY chosen their flight and hotel — do not pick different ones.\n"
+            "Chosen flight: {chosen_flight}\n"
+            "Chosen hotel: {chosen_hotel}\n\n"
+            "Using those choices and the activity research, design a day-by-day itinerary for the "
+            "{days}-day trip to {destination} for {travelers} traveler(s). Lay out each day with a "
+            "morning, afternoon, and evening, and keep a running per-day cost estimate. Respect a "
+            "realistic pace (account for the long flight on arrival day)."
+        ),
+        expected_output=(
+            "A clear day-by-day plan (day number, theme, morning/afternoon/evening, per-day cost), "
+            "built around the chosen flight and hotel, with a rough running total."
+        ),
+        context=[research_activities],
+        agent=a["itinerary_designer"],
+    )
+
+    audit_budget = Task(
+        description=(
+            "Review the proposed itinerary against the budget of {budget} {currency} for "
+            "{travelers} traveler(s). The traveler's chosen flight and hotel are:\n"
+            "Flight: {chosen_flight}\n"
+            "Hotel: {chosen_hotel}\n\n"
+            "Sum all costs: flights (per person x travelers) + hotel (per night x nights) + "
+            "activities (per person x travelers). Decide whether the trip is within budget. If it "
+            "is over, suggest specific, concrete cuts. Then produce the final structured trip plan, "
+            "using the chosen flight and hotel as selected_flight and selected_hotel."
+        ),
+        expected_output=(
+            "A single JSON object for the final TripPlan, with ALL of these fields populated "
+            "in one response (never a partial object): summary, selected_flight (the chosen "
+            "flight), selected_hotel (the chosen hotel), itinerary (one entry per day), currency, "
+            "estimated_total (whole party), budget, within_budget, and budget_notes."
+        ),
+        context=[design_itinerary],
+        agent=a["budget_auditor"],
+        output_pydantic=TripPlan,
+    )
+
+    return Crew(
+        agents=[a["activities_curator"], a["itinerary_designer"], a["budget_auditor"]],
+        tasks=[research_activities, design_itinerary, audit_budget],
         process=Process.sequential,
         verbose=True,
         step_callback=step_callback,
