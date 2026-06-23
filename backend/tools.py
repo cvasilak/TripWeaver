@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 
 from crewai.tools import tool
 
@@ -96,3 +97,41 @@ def search_activities(city: str, interests: str) -> str:
          "duration_hours": 3, "price_per_person": 28, "currency": "EUR"},
     ]
     return json.dumps({"city": city, "interests": interests, "options": options}, indent=2)
+
+
+@tool("Book Flight")
+def book_flight(airline: str, amount: float = 0.0, currency: str = "EUR") -> str:
+    """Reserve the traveler's chosen flight (local mock reservation system).
+
+    Args:
+        airline: The airline of the chosen flight.
+        amount: Total flight charge for the whole party.
+        currency: ISO currency code.
+
+    Returns:
+        A JSON string with the reservation reference and status.
+    """
+    ref = "FL-" + uuid.uuid4().hex[:6].upper()
+    return json.dumps(
+        {"reference": ref, "status": "confirmed", "airline": airline,
+         "amount": amount, "currency": currency}
+    )
+
+
+@tool("Book Hotel")
+def book_hotel(hotel_name: str, amount: float = 0.0, currency: str = "EUR") -> str:
+    """Reserve the traveler's chosen hotel (local mock reservation system).
+
+    Args:
+        hotel_name: The name of the chosen hotel.
+        amount: Total hotel charge for the stay.
+        currency: ISO currency code.
+
+    Returns:
+        A JSON string with the reservation reference and status.
+    """
+    ref = "HT-" + uuid.uuid4().hex[:6].upper()
+    return json.dumps(
+        {"reference": ref, "status": "confirmed", "hotel_name": hotel_name,
+         "amount": amount, "currency": currency}
+    )

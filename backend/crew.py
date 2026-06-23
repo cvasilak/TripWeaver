@@ -26,8 +26,14 @@ from __future__ import annotations
 from crewai import Agent, Crew, Process, Task
 
 from .config import get_llm
-from .models import FlightOptions, HotelOptions, TripPlan
-from .tools import search_activities, search_flights, search_hotels
+from .models import BookingConfirmation, FlightOptions, HotelOptions, TripPlan
+from .tools import (
+    book_flight,
+    book_hotel,
+    search_activities,
+    search_flights,
+    search_hotels,
+)
 
 
 def _build_agents(llm) -> dict[str, Agent]:
@@ -95,12 +101,27 @@ def _build_agents(llm) -> dict[str, Agent]:
         verbose=True,
     )
 
+    booking_coordinator = Agent(
+        role="Booking Coordinator",
+        goal="Finalize the traveler's reservations and issue a single clear confirmation.",
+        backstory=(
+            "A reliable bookings agent who places the flight and hotel reservations, "
+            "reconciles their confirmation references, and reports one clear confirmation "
+            "to the traveler — never claiming a booking the reservation system didn't confirm."
+        ),
+        tools=[book_flight, book_hotel],
+        llm=llm,
+        allow_delegation=False,
+        verbose=True,
+    )
+
     return {
         "flight_researcher": flight_researcher,
         "hotel_researcher": hotel_researcher,
         "activities_curator": activities_curator,
         "itinerary_designer": itinerary_designer,
         "budget_auditor": budget_auditor,
+        "booking_coordinator": booking_coordinator,
     }
 
 
@@ -307,6 +328,45 @@ def build_planning_crew(step_callback=None, task_callback=None) -> Crew:
     return Crew(
         agents=[a["activities_curator"], a["itinerary_designer"], a["budget_auditor"]],
         tasks=[research_activities, design_itinerary, audit_budget],
+        process=Process.sequential,
+        verbose=True,
+        step_callback=step_callback,
+        task_callback=task_callback,
+    )
+
+
+def build_booking_crew(step_callback=None, task_callback=None) -> Crew:
+    """Final HITL leg: the traveler confirmed, so place the reservations.
+
+    Pass the chosen flight/hotel (readable JSON/text) plus the ``total`` and
+    ``currency`` via ``kickoff`` inputs. The Booking Coordinator uses the Book
+    Flight / Book Hotel tools and emits a structured ``BookingConfirmation``.
+    """
+    llm = get_llm()
+    a = _build_agents(llm)
+
+    confirm_booking = Task(
+        description=(
+            "The traveler has CONFIRMED they want to book this trip — place the reservations now.\n"
+            "Flight: {chosen_flight}\n"
+            "Hotel: {chosen_hotel}\n"
+            "Total to charge: {total} {currency} for the whole party.\n\n"
+            "Use the Book Flight tool for the flight and the Book Hotel tool for the hotel, then "
+            "report a single booking confirmation. Only mark a reservation 'confirmed' if its tool "
+            "returned status 'confirmed'."
+        ),
+        expected_output=(
+            "A single JSON object for the BookingConfirmation: code (combine the two reservation "
+            "references, e.g. 'FL-XXXXXX / HT-YYYYYY'), flight_status, hotel_status, total, "
+            "currency, and a short friendly message confirming the trip."
+        ),
+        agent=a["booking_coordinator"],
+        output_pydantic=BookingConfirmation,
+    )
+
+    return Crew(
+        agents=[a["booking_coordinator"]],
+        tasks=[confirm_booking],
         process=Process.sequential,
         verbose=True,
         step_callback=step_callback,

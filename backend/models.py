@@ -87,3 +87,18 @@ class TripPlan(BaseModel):
     budget_notes: str = Field(
         description="How the total compares to budget, and any suggested cuts if over."
     )
+
+
+class BookingConfirmation(BaseModel):
+    """The result of the Booking Coordinator placing the reservations.
+
+    Emitted by the booking crew once the traveler confirms (the final HITL leg),
+    and rendered as the booking-confirmation surface.
+    """
+
+    code: str = Field(description="Overall confirmation code (combines the flight + hotel refs).")
+    flight_status: str = Field(description="Flight reservation status, e.g. 'confirmed'.")
+    hotel_status: str = Field(description="Hotel reservation status, e.g. 'confirmed'.")
+    total: float = Field(description="Total amount charged for the whole party.")
+    currency: str
+    message: str = Field(description="A short, friendly confirmation message for the traveler.")
