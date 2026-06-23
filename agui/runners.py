@@ -178,8 +178,6 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     def emit(event: BaseEvent) -> None:
         loop.call_soon_threadsafe(queue.put_nowait, event)
 
-    step_seq = 0
-
     def task_callback(output: Any) -> None:
         mid = _id()
         text = str(getattr(output, "raw", None) or output).strip()
@@ -192,22 +190,40 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         emit(TextMessageContentEvent(message_id=mid, delta=text[:4000]))
         emit(TextMessageEndEvent(message_id=mid))
 
-    def step_callback(step: Any) -> None:
-        # AG-UI requires STEP_STARTED to be matched by STEP_FINISHED and never
-        # re-started while still active. CrewAI fires this per step with repeating
-        # labels (AgentAction/AgentFinish), so emit a unique, self-contained pair
-        # — otherwise two STEP_STARTED "AgentFinish" collide ("already active").
-        nonlocal step_seq
-        step_seq += 1
-        label = getattr(step, "tool", None) or type(step).__name__
-        name = f"{str(label)[:48]} #{step_seq}"
-        emit(StepStartedEvent(step_name=name))
-        emit(StepFinishedEvent(step_name=name))
-
     def run() -> None:
+        # Bridge CrewAI's event bus to AG-UI tool-call events, so each tool the
+        # agents invoke shows up in the chat as a tool call. scoped_handlers keeps
+        # the subscriptions local to this run.
+        from crewai.events import crewai_event_bus
+        from crewai.events.types.tool_usage_events import (
+            ToolUsageFinishedEvent,
+            ToolUsageStartedEvent,
+        )
+
+        tool_calls: dict[str, str] = {}
+
+        def _args_delta(value: Any) -> str:
+            return value if isinstance(value, str) else json.dumps(value, default=str)
+
         try:
-            crew = build_crew(step_callback=step_callback, task_callback=task_callback)
-            result = crew.kickoff(inputs=req)
+            with crewai_event_bus.scoped_handlers():
+
+                @crewai_event_bus.on(ToolUsageStartedEvent)
+                def _tool_started(_source: Any, e: Any) -> None:
+                    tc = uuid.uuid4().hex
+                    tool_calls[e.tool_name] = tc
+                    emit(ToolCallStartEvent(tool_call_id=tc, tool_call_name=e.tool_name))
+                    emit(ToolCallArgsEvent(tool_call_id=tc, delta=_args_delta(e.tool_args)))
+
+                @crewai_event_bus.on(ToolUsageFinishedEvent)
+                def _tool_finished(_source: Any, e: Any) -> None:
+                    tc = tool_calls.pop(e.tool_name, None) or uuid.uuid4().hex
+                    emit(ToolCallEndEvent(tool_call_id=tc))
+                    emit(ToolCallResultEvent(message_id=uuid.uuid4().hex, tool_call_id=tc,
+                                             content=str(getattr(e, "output", ""))[:600], role="tool"))
+
+                crew = build_crew(task_callback=task_callback)
+                result = crew.kickoff(inputs=req)
             loop.call_soon_threadsafe(queue.put_nowait, ("__done__", result))
         except Exception as e:  # noqa: BLE001 - surfaced to the client as RUN_ERROR
             loop.call_soon_threadsafe(queue.put_nowait, ("__error__", e))
