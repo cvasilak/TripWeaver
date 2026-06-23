@@ -25,7 +25,14 @@ function A2UISurface({ surfaceId, components, data }: { surfaceId?: string; comp
     }
     processMessages(messages)
   }, [ready, surfaceId, components, data, processMessages])
-  return ready ? <A2UIRenderer surfaceId={surfaceId as string} /> : null
+  // Wrap in .tw-a2ui so we can give the surface a consistent light "card panel"
+  // look — its components render white cards + transparent areas with inherited
+  // (light) text, which is invisible on the dark chat. See globals.css.
+  return ready ? (
+    <div className="tw-a2ui">
+      <A2UIRenderer surfaceId={surfaceId as string} />
+    </div>
+  ) : null
 }
 
 // Register the render_a2ui tool so its calls render as A2UI surfaces (generative

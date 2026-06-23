@@ -52,3 +52,32 @@ body {
 .copilotKitInputContainer textarea::placeholder {
   color: var(--muted) !important;
 }
+
+/* A2UI surface (rendered by @copilotkit/a2ui-renderer). Its components draw
+   white cards + transparent areas and inherit text color — light-on-dark in our
+   chat = unreadable. Present the whole surface as one crisp light "card panel":
+   consistent light background + dark text everywhere, accent buttons. */
+.tw-a2ui {
+  --a2ui-primary-color: #2563eb;
+  background: #f6f8fc;
+  color: #0f1422;
+  border: 1px solid #d7deea;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin: 8px 0;
+  line-height: 1.5;
+}
+.tw-a2ui h1, .tw-a2ui h2, .tw-a2ui h3, .tw-a2ui p, .tw-a2ui span, .tw-a2ui div, .tw-a2ui label {
+  color: #0f1422;
+}
+.tw-a2ui hr { border: none; border-top: 1px solid #d7deea; }
+.tw-a2ui button {
+  background: #2563eb !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 8px !important;
+  padding: 8px 16px !important;
+  font-weight: 600 !important;
+  cursor: pointer;
+}
+.tw-a2ui button:hover { background: #1d4ed8 !important; }
