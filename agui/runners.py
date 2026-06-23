@@ -159,16 +159,22 @@ async def demo_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
 
 # --------------------------------------------------------------------------- #
 # crew runner — the real CrewAI crew (needs ANTHROPIC_API_KEY + credits),
-# with a human-in-the-loop "pick your flight & hotel" gate.
+# with human-in-the-loop "pick your flight & hotel" and "confirm booking" gates.
 #
-# The flow spans two runs (AG-UI is one-directional SSE):
+# The flow spans three runs (AG-UI is one-directional SSE):
 #   Run 1 (no pick yet): run the research crew -> emit a `select_options` tool
 #       call carrying the ranked flight/hotel options, then finish the run.
 #       CopilotKit's renderAndWaitForResponse renders the picker and waits.
 #   Run 2 (pick present): the traveler's choice arrives as a tool-result message;
-#       run the planning crew *around* that choice and render the final TripPlan.
+#       run the planning crew *around* that choice, render the TripPlan, then emit
+#       a `confirm_booking` tool call and finish — CopilotKit waits again.
+#   Run 3 (confirmation present): run the booking crew to place the reservations
+#       and render the booking-confirmation surface.
+# Phases are checked in reverse order (confirmation -> pick -> fresh) because each
+# later run's messages still contain the earlier gates' results.
 # --------------------------------------------------------------------------- #
 SELECT_OPTIONS_TOOL = "select_options"
+CONFIRM_BOOKING_TOOL = "confirm_booking"
 
 
 def _parse_pick(content: Any) -> dict | None:
@@ -215,6 +221,54 @@ def _read_selection(agent_input: RunAgentInput) -> dict | None:
         if select_ids and getattr(m, "tool_call_id", None) not in select_ids:
             continue
         return payload
+    return None
+
+
+def _parse_confirmation(content: Any) -> dict | None:
+    """Parse a tool-result payload into a booking confirmation (``{'confirmed': ...,
+    'booking': {...}}``) or None if it isn't one."""
+    try:
+        data = json.loads(content) if isinstance(content, str) else content
+    except (ValueError, TypeError):
+        return None
+    if isinstance(data, dict) and "confirmed" in data:
+        return data
+    return None
+
+
+def _read_confirmation(agent_input: RunAgentInput) -> dict | None:
+    """Return the booking confirmation if the traveler has *just* answered the
+    confirm-booking gate (and we haven't booked yet); else None.
+
+    Guard against re-booking: if any assistant turn follows the confirmation
+    tool-result, Run 3 already handled it, so later chatter won't book again.
+    """
+    messages = list(getattr(agent_input, "messages", None) or [])
+
+    confirm_ids: set[str] = set()
+    for m in messages:
+        for tcobj in getattr(m, "tool_calls", None) or []:
+            fn = getattr(tcobj, "function", None)
+            name = getattr(fn, "name", None) if fn is not None else None
+            cid = getattr(tcobj, "id", None)
+            if name == CONFIRM_BOOKING_TOOL and cid:
+                confirm_ids.add(cid)
+
+    for idx in range(len(messages) - 1, -1, -1):
+        m = messages[idx]
+        if getattr(m, "role", None) != "tool":
+            continue
+        payload = _parse_confirmation(getattr(m, "content", None))
+        if payload is None:
+            continue
+        if confirm_ids and getattr(m, "tool_call_id", None) not in confirm_ids:
+            continue
+        # Only the most recent confirmation matters; act on it only if no assistant
+        # turn comes after it (i.e. we haven't already booked).
+        already_handled = any(
+            getattr(messages[j], "role", None) == "assistant" for j in range(idx + 1, len(messages))
+        )
+        return None if already_handled else payload
     return None
 
 
@@ -336,13 +390,72 @@ async def _run_crew(
 
 
 async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
-    from backend.crew import build_planning_crew, build_research_crew  # heavy import
+    from backend.crew import (  # heavy import
+        build_booking_crew,
+        build_planning_crew,
+        build_research_crew,
+    )
 
     tid, rid = agent_input.thread_id, agent_input.run_id
     req = _trip_request(agent_input)
+    confirmation = _read_confirmation(agent_input)
     pick = _read_selection(agent_input)
 
     yield RunStartedEvent(thread_id=tid, run_id=rid)
+
+    # ---- Run 3: the traveler confirmed; place the reservations -------------
+    if confirmation is not None:
+        if not confirmation.get("confirmed"):
+            async for ev in _stream_text(
+                "No problem — I haven't booked anything. Tell me what you'd like to change."
+            ):
+                yield ev
+            yield RunFinishedEvent(thread_id=tid, run_id=rid, result={"booked": False})
+            return
+
+        booking = confirmation.get("booking") or {}
+        flight = booking.get("flight") or {}
+        hotel = booking.get("hotel") or {}
+        currency = booking.get("currency") or req.get("currency", "EUR")
+        total = booking.get("total")
+
+        async for ev in _stream_text(
+            f"Confirming your trip — placing the flight and hotel reservations…"
+        ):
+            yield ev
+
+        inputs = {
+            "chosen_flight": json.dumps(flight, default=str),
+            "chosen_hotel": json.dumps(hotel, default=str),
+            "total": total if total is not None else "",
+            "currency": currency,
+        }
+        result = None
+        async for item in _run_crew(build_booking_crew, inputs,
+                                    finalize_text="Confirming your booking…"):
+            if isinstance(item, tuple):
+                kind, payload = item
+                if kind == "__error__":
+                    yield RunErrorEvent(message=str(payload))
+                    return
+                result = payload
+            else:
+                yield item
+
+        conf = getattr(result, "pydantic", None)
+        code = (getattr(conf, "code", None) if conf else None) or ("TWX-" + uuid.uuid4().hex[:6].upper())
+        message = getattr(conf, "message", "") if conf else ""
+        ctx = {
+            "airline": flight.get("airline", "?"),
+            "hotel": hotel.get("name", "?"),
+            "total": total if total is not None else "?",
+            "currency": currency,
+        }
+        for ev in a2ui.emit_surface(a2ui.booking_confirmation_surface(ctx, code, message=message)):
+            yield ev
+        yield StateSnapshotEvent(snapshot={"booking": conf.model_dump() if conf else {"code": code}})
+        yield RunFinishedEvent(thread_id=tid, run_id=rid, result={"booked": True, "code": code})
+        return
 
     # ---- Run 2: the traveler has picked; plan around their choice ----------
     if pick is not None:
@@ -375,6 +488,24 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         for ev in a2ui.emit_surface(a2ui.trip_plan_surface(snapshot)):
             yield ev
         yield StateSnapshotEvent(snapshot={"plan": snapshot})
+
+        # If we have a structured plan, offer the booking gate: a `confirm_booking`
+        # tool call with NO result (renderAndWaitForResponse) carrying the booking
+        # summary. The confirmation comes back on the next run (_read_confirmation).
+        if "itinerary" in snapshot:
+            booking_ctx = {
+                "flight": snapshot.get("selected_flight") or {},
+                "hotel": snapshot.get("selected_hotel") or {},
+                "total": snapshot.get("estimated_total"),
+                "currency": snapshot.get("currency", req.get("currency", "EUR")),
+            }
+            tc = _id()
+            yield ToolCallStartEvent(tool_call_id=tc, tool_call_name=CONFIRM_BOOKING_TOOL)
+            yield ToolCallArgsEvent(tool_call_id=tc, delta=json.dumps(booking_ctx, default=str))
+            yield ToolCallEndEvent(tool_call_id=tc)
+            yield RunFinishedEvent(thread_id=tid, run_id=rid, result={"awaiting": CONFIRM_BOOKING_TOOL})
+            return
+
         yield RunFinishedEvent(thread_id=tid, run_id=rid, result=snapshot)
         return
 

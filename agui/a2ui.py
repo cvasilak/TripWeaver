@@ -235,8 +235,12 @@ def plan_surface(req: dict, flights: list[dict], hotel: dict, chosen_airline: st
     ]
 
 
-def booking_confirmation_surface(context: dict, code: str) -> list[CustomEvent]:
-    """Shown after the user clicks 'Confirm & book' — the HITL result surface."""
+def booking_confirmation_surface(context: dict, code: str, message: str = "") -> list[CustomEvent]:
+    """Shown after the user confirms the booking — the HITL result surface.
+
+    ``message`` is an optional friendly note (the Booking Coordinator's confirmation
+    message in crew mode); omitted in a2ui mode.
+    """
     cur = context.get("currency", "EUR")
     comps = [
         text("ok", "✅ Booking confirmed", "h2"),
@@ -244,8 +248,12 @@ def booking_confirmation_surface(context: dict, code: str) -> list[CustomEvent]:
         text("d2", f"Hotel: {context.get('hotel', '?')}", "body"),
         text("d3", f"Total charged: {context.get('total', '?')} {cur}", "body"),
         text("code", f"Confirmation code: {code}", "caption"),
-        column("root", ["ok", "d1", "d2", "d3", "code"]),
     ]
+    root = ["ok", "d1", "d2", "d3", "code"]
+    if message:
+        comps.append(text("msg", str(message), "body"))
+        root.append("msg")
+    comps.append(column("root", root))
     return [event(create_surface(BOOKING_SURFACE)), event(update_components(BOOKING_SURFACE, comps))]
 
 
@@ -321,12 +329,9 @@ def trip_plan_surface(plan: dict) -> list[CustomEvent]:
     add(text("bnotes", str(plan.get("budget_notes", "")), "caption"))
     root += ["btot", "bnotes"]
 
-    # --- HITL book gate ---
-    add(text("bookbl", "Confirm & book"))
-    add(button("book", "bookbl", "book",
-               {"airline": f.get("airline", ""), "hotel": h.get("name", ""),
-                "total": plan.get("estimated_total", ""), "currency": cur}, primary=True))
-    root.append("book")
+    # The "Confirm & book" gate is a separate `confirm_booking` HITL tool call the
+    # crew runner emits right after this surface (CopilotKit renderAndWaitForResponse),
+    # so it isn't an A2UI button here. (a2ui mode's plan_surface keeps its button.)
 
     add(column("root", root, distribution="start"))
     return [event(create_surface(PLAN_SURFACE)), event(update_components(PLAN_SURFACE, comps))]
