@@ -243,15 +243,15 @@ def booking_confirmation_surface(context: dict, code: str, message: str = "") ->
     """
     cur = context.get("currency", "EUR")
     comps = [
-        text("ok", "✅ Booking confirmed", "h2"),
-        text("d1", f"Flight: {context.get('airline', '?')}", "body"),
-        text("d2", f"Hotel: {context.get('hotel', '?')}", "body"),
-        text("d3", f"Total charged: {context.get('total', '?')} {cur}", "body"),
-        text("code", f"Confirmation code: {code}", "caption"),
+        text("ok", "🎉 Booking confirmed!", "h2"),
+        text("d1", f"✈️ Flight: {context.get('airline', '?')}", "body"),
+        text("d2", f"🏨 Hotel: {context.get('hotel', '?')}", "body"),
+        text("d3", f"💳 Total charged: {context.get('total', '?')} {cur}", "body"),
+        text("code", f"🎫 Confirmation code: {code}", "caption"),
     ]
     root = ["ok", "d1", "d2", "d3", "code"]
     if message:
-        comps.append(text("msg", str(message), "body"))
+        comps.append(text("msg", f"🧳 {message}", "body"))
         root.append("msg")
     comps.append(column("root", root))
     return [event(create_surface(BOOKING_SURFACE)), event(update_components(BOOKING_SURFACE, comps))]
