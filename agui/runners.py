@@ -205,7 +205,7 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         )
 
         tool_calls: dict[str, str] = {}
-        agent_calls: dict[str, str] = {}
+        agent_stack: list[str] = []  # tool_call ids for in-flight agents (LIFO; crew is sequential)
 
         def _args_delta(value: Any) -> str:
             return value if isinstance(value, str) else json.dumps(value, default=str)
@@ -231,15 +231,17 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
                 def _agent_started(_source: Any, e: Any) -> None:
                     # A render-only "agent_step" tool call: it stays in-progress
                     # (spinner) until the agent finishes; the frontend renders it as
-                    # "Starting <agent>…".
+                    # "Starting <agent role>…". Read the role off the agent object —
+                    # event.agent_role isn't reliably populated.
+                    role = getattr(getattr(e, "agent", None), "role", None) or e.agent_role or "agent"
                     tc = uuid.uuid4().hex
-                    agent_calls[e.agent_id] = tc
+                    agent_stack.append(tc)
                     emit(ToolCallStartEvent(tool_call_id=tc, tool_call_name="agent_step"))
-                    emit(ToolCallArgsEvent(tool_call_id=tc, delta=json.dumps({"agent": e.agent_role})))
+                    emit(ToolCallArgsEvent(tool_call_id=tc, delta=json.dumps({"agent": role})))
 
                 @crewai_event_bus.on(AgentExecutionCompletedEvent)
                 def _agent_completed(_source: Any, e: Any) -> None:
-                    tc = agent_calls.pop(e.agent_id, None) or uuid.uuid4().hex
+                    tc = agent_stack.pop() if agent_stack else uuid.uuid4().hex
                     emit(ToolCallEndEvent(tool_call_id=tc))
                     emit(ToolCallResultEvent(message_id=uuid.uuid4().hex, tool_call_id=tc,
                                              content="{}", role="tool"))
