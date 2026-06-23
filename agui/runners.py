@@ -158,20 +158,95 @@ async def demo_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
 
 
 # --------------------------------------------------------------------------- #
-# crew runner — the real CrewAI crew (needs ANTHROPIC_API_KEY + credits)
+# crew runner — the real CrewAI crew (needs ANTHROPIC_API_KEY + credits),
+# with a human-in-the-loop "pick your flight & hotel" gate.
+#
+# The flow spans two runs (AG-UI is one-directional SSE):
+#   Run 1 (no pick yet): run the research crew -> emit a `select_options` tool
+#       call carrying the ranked flight/hotel options, then finish the run.
+#       CopilotKit's renderAndWaitForResponse renders the picker and waits.
+#   Run 2 (pick present): the traveler's choice arrives as a tool-result message;
+#       run the planning crew *around* that choice and render the final TripPlan.
 # --------------------------------------------------------------------------- #
-async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
-    from backend.crew import build_crew  # heavy import; only when this mode is used
+SELECT_OPTIONS_TOOL = "select_options"
 
-    tid, rid = agent_input.thread_id, agent_input.run_id
-    req = _trip_request(agent_input)
 
-    yield RunStartedEvent(thread_id=tid, run_id=rid)
-    async for ev in _stream_text(f"Starting the crew to plan your trip to {req['destination']}…"):
-        yield ev
+def _parse_pick(content: Any) -> dict | None:
+    """Parse a tool-result payload into ``{'flight': {...}, 'hotel': {...}}`` or
+    return None if it isn't a flight+hotel selection."""
+    try:
+        data = json.loads(content) if isinstance(content, str) else content
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    flight, hotel = data.get("flight"), data.get("hotel")
+    if isinstance(flight, dict) and isinstance(hotel, dict):
+        return {"flight": flight, "hotel": hotel}
+    return None
 
-    # The crew runs synchronously in a worker thread; its callbacks push AG-UI
-    # events onto this queue, which we drain and yield as they arrive.
+
+def _read_selection(agent_input: RunAgentInput) -> dict | None:
+    """If this run continues after the traveler picked options, return the pick.
+
+    CopilotKit's ``renderAndWaitForResponse`` delivers the pick as a tool-result
+    message (role ``"tool"``) answering our ``select_options`` tool call. We scan
+    the incoming messages newest-first and parse the first flight+hotel payload —
+    preferring one that answers our own tool call, but tolerant of the exact id
+    plumbing so a stray-but-valid pick still works.
+    """
+    messages = list(getattr(agent_input, "messages", None) or [])
+
+    select_ids: set[str] = set()
+    for m in messages:
+        for tcobj in getattr(m, "tool_calls", None) or []:
+            fn = getattr(tcobj, "function", None)
+            name = getattr(fn, "name", None) if fn is not None else None
+            cid = getattr(tcobj, "id", None)
+            if name == SELECT_OPTIONS_TOOL and cid:
+                select_ids.add(cid)
+
+    for m in reversed(messages):
+        if getattr(m, "role", None) != "tool":
+            continue
+        payload = _parse_pick(getattr(m, "content", None))
+        if payload is None:
+            continue
+        if select_ids and getattr(m, "tool_call_id", None) not in select_ids:
+            continue
+        return payload
+    return None
+
+
+def _extract_options(task_output: Any) -> list[dict]:
+    """Pull the list of options out of a research TaskOutput (structured first,
+    raw-JSON fallback)."""
+    pyd = getattr(task_output, "pydantic", None)
+    if pyd is not None and hasattr(pyd, "options"):
+        return [o.model_dump() for o in pyd.options]
+    raw = getattr(task_output, "raw", None) or ""
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    opts = data.get("options") if isinstance(data, dict) else data
+    return opts if isinstance(opts, list) else []
+
+
+async def _run_crew(
+    build_fn: Any,
+    inputs: dict[str, Any],
+    *,
+    stream_tasks: bool = True,
+    finalize_text: str = "Finalizing your trip plan…",
+) -> AsyncIterator[Any]:
+    """Run a crew in a worker thread, yielding AG-UI events as the agents work.
+
+    Each tool the agents invoke surfaces as a tool call; each agent start surfaces
+    as an in-progress ``agent_step`` (spinner). The final item yielded is the
+    sentinel tuple ``("__done__", CrewOutput)`` or ``("__error__", exc)`` — the
+    caller handles it.
+    """
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -181,19 +256,17 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     def task_callback(output: Any) -> None:
         mid = _id()
         text = str(getattr(output, "raw", None) or output).strip()
-        # The final task's output is the structured TripPlan (JSON, via
-        # output_pydantic). Don't dump raw JSON into the chat — the A2UI surface
-        # renders it. Researcher tasks output natural language, which we stream.
+        # Structured task outputs (JSON via output_pydantic) are rendered as UI,
+        # not dumped into the chat; natural-language task outputs are streamed.
         if text.startswith(("{", "[")):
-            text = "Finalizing your trip plan…"
+            text = finalize_text
         emit(TextMessageStartEvent(message_id=mid, role="assistant"))
         emit(TextMessageContentEvent(message_id=mid, delta=text[:4000]))
         emit(TextMessageEndEvent(message_id=mid))
 
     def run() -> None:
-        # Bridge CrewAI's event bus to AG-UI tool-call events, so each tool the
-        # agents invoke shows up in the chat as a tool call. scoped_handlers keeps
-        # the subscriptions local to this run.
+        # Bridge CrewAI's event bus to AG-UI tool-call events. scoped_handlers
+        # keeps the subscriptions local to this run.
         from crewai.events import crewai_event_bus
         from crewai.events.types.agent_events import (
             AgentExecutionCompletedEvent,
@@ -246,8 +319,8 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
                     emit(ToolCallResultEvent(message_id=uuid.uuid4().hex, tool_call_id=tc,
                                              content="{}", role="tool"))
 
-                crew = build_crew(task_callback=task_callback)
-                result = crew.kickoff(inputs=req)
+                crew = build_fn(task_callback=task_callback if stream_tasks else None)
+                result = crew.kickoff(inputs=inputs)
             loop.call_soon_threadsafe(queue.put_nowait, ("__done__", result))
         except Exception as e:  # noqa: BLE001 - surfaced to the client as RUN_ERROR
             loop.call_soon_threadsafe(queue.put_nowait, ("__error__", e))
@@ -257,20 +330,87 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     while True:
         item = await queue.get()
         if isinstance(item, tuple) and item and item[0] in ("__done__", "__error__"):
+            yield item
+            return
+        yield item
+
+
+async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+    from backend.crew import build_planning_crew, build_research_crew  # heavy import
+
+    tid, rid = agent_input.thread_id, agent_input.run_id
+    req = _trip_request(agent_input)
+    pick = _read_selection(agent_input)
+
+    yield RunStartedEvent(thread_id=tid, run_id=rid)
+
+    # ---- Run 2: the traveler has picked; plan around their choice ----------
+    if pick is not None:
+        flight, hotel = pick["flight"], pick["hotel"]
+        async for ev in _stream_text(
+            f"Great choice — building your itinerary around "
+            f"{flight.get('airline', 'your flight')} and {hotel.get('name', 'your hotel')}…"
+        ):
+            yield ev
+
+        inputs = {
+            **req,
+            "chosen_flight": json.dumps(flight, default=str),
+            "chosen_hotel": json.dumps(hotel, default=str),
+        }
+        result = None
+        async for item in _run_crew(build_planning_crew, inputs,
+                                    finalize_text="Finalizing your trip plan…"):
+            if isinstance(item, tuple):
+                kind, payload = item
+                if kind == "__error__":
+                    yield RunErrorEvent(message=str(payload))
+                    return
+                result = payload
+            else:
+                yield item
+
+        plan = getattr(result, "pydantic", None)
+        snapshot = plan.model_dump() if plan is not None else {"raw": str(getattr(result, "raw", result))}
+        for ev in a2ui.emit_surface(a2ui.trip_plan_surface(snapshot)):
+            yield ev
+        yield StateSnapshotEvent(snapshot={"plan": snapshot})
+        yield RunFinishedEvent(thread_id=tid, run_id=rid, result=snapshot)
+        return
+
+    # ---- Run 1: research options and hand them to the traveler to pick -----
+    async for ev in _stream_text(
+        f"Researching flights and hotels for your trip to {req['destination']}…"
+    ):
+        yield ev
+
+    result = None
+    async for item in _run_crew(build_research_crew, req, stream_tasks=False):
+        if isinstance(item, tuple):
             kind, payload = item
             if kind == "__error__":
                 yield RunErrorEvent(message=str(payload))
                 return
-            plan = getattr(payload, "pydantic", None)
-            snapshot = plan.model_dump() if plan is not None else {"raw": str(getattr(payload, "raw", payload))}
-            # Render the crew's structured TripPlan as an A2UI surface (cards),
-            # then keep the raw plan in shared state for non-A2UI consumers.
-            for ev in a2ui.emit_surface(a2ui.trip_plan_surface(snapshot)):
-                yield ev
-            yield StateSnapshotEvent(snapshot={"plan": snapshot})
-            yield RunFinishedEvent(thread_id=tid, run_id=rid, result=snapshot)
-            return
-        yield item
+            result = payload
+        else:
+            yield item
+
+    tasks_output = list(getattr(result, "tasks_output", None) or [])
+    flights = _extract_options(tasks_output[0]) if len(tasks_output) > 0 else []
+    hotels = _extract_options(tasks_output[1]) if len(tasks_output) > 1 else []
+
+    # Hand the options to the traveler as a `select_options` tool call with NO
+    # result — CopilotKit's renderAndWaitForResponse renders the picker and waits
+    # for respond(). The pick comes back on the next run (see _read_selection).
+    tc = _id()
+    yield ToolCallStartEvent(tool_call_id=tc, tool_call_name=SELECT_OPTIONS_TOOL)
+    yield ToolCallArgsEvent(
+        tool_call_id=tc,
+        delta=json.dumps({"flights": flights, "hotels": hotels, "request": req}, default=str),
+    )
+    yield ToolCallEndEvent(tool_call_id=tc)
+    yield StateSnapshotEvent(snapshot={"request": req, "flights": flights, "hotels": hotels, "plan": None})
+    yield RunFinishedEvent(thread_id=tid, run_id=rid, result={"awaiting": SELECT_OPTIONS_TOOL})
 
 
 # --------------------------------------------------------------------------- #
