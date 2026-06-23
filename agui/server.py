@@ -19,6 +19,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from agui import a2ui
 from agui.runners import RUNNERS, demo_runner
 
 app = FastAPI(title="TripWeaver AG-UI server")
@@ -28,10 +29,15 @@ app = FastAPI(title="TripWeaver AG-UI server")
 async def agui(input: RunAgentInput, request: Request) -> StreamingResponse:
     """Accept a RunAgentInput and stream the run back as AG-UI events (SSE)."""
     mode = request.query_params.get("mode") or os.getenv("TRIPWEAVER_AGUI_MODE", "demo")
+    # A2UI carrier: ?a2ui=tool makes surfaces ride as render_a2ui tool calls
+    # (CopilotKit); default "custom" emits CUSTOM events (our vanilla renderer).
+    carrier = request.query_params.get("a2ui")
     runner = RUNNERS.get(mode, demo_runner)
     encoder = EventEncoder()
 
     async def stream():
+        if carrier:
+            a2ui.set_carrier(carrier)
         try:
             async for event in runner(input):
                 yield encoder.encode(event)
@@ -49,6 +55,9 @@ app.mount("/", StaticFiles(directory=str(_STATIC), html=True), name="static")
 
 def main() -> None:
     import uvicorn
+    from dotenv import load_dotenv
+
+    load_dotenv()  # so crew mode picks up ANTHROPIC_API_KEY from .env, like backend.main
 
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8000"))

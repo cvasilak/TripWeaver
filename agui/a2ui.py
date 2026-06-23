@@ -18,6 +18,7 @@ bindings into the surface data model.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import uuid
@@ -71,12 +72,24 @@ def update_data(surface_id: str, path: str, value: Any) -> dict[str, Any]:
 
 
 # --- carrier: CUSTOM events vs a render_a2ui tool call --------------------- #
+# Per-request carrier override (set by the server from the ?a2ui= query param),
+# falling back to the env var, then "custom". A contextvar so concurrent requests
+# don't clobber each other.
+_carrier_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("a2ui_carrier", default=None)
+
+
+def set_carrier(value: str | None) -> None:
+    """Set the A2UI carrier for the current request context ("tool" | "custom")."""
+    _carrier_var.set(value or None)
+
+
 def emit_surface(messages: list[CustomEvent]) -> list[BaseEvent]:
     """Turn a surface (list of validated CUSTOM-event A2UI messages) into the
-    AG-UI events to actually emit, per the configured carrier. The surface
-    builders always produce CUSTOM events; this adapts them for CopilotKit when
-    ``TRIPWEAVER_A2UI_CARRIER=tool``."""
-    if os.getenv("TRIPWEAVER_A2UI_CARRIER", "custom").lower() == "tool":
+    AG-UI events to actually emit, per the active carrier. The surface builders
+    always produce CUSTOM events; this adapts them to a render_a2ui tool call for
+    CopilotKit. Carrier resolution: per-request override -> env -> "custom"."""
+    carrier = _carrier_var.get() or os.getenv("TRIPWEAVER_A2UI_CARRIER", "custom")
+    if carrier.lower() == "tool":
         return _to_render_tool(messages)
     return list(messages)
 

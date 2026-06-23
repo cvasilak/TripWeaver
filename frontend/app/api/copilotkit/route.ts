@@ -14,7 +14,10 @@ export const dynamic = 'force-dynamic'
 
 // The AG-UI server (agui.server). mode=crew makes it emit Crew surfaces, which
 // CopilotKit's native A2UI middleware (enabled below) renders in the chat.
-const AGUI_URL = process.env.AGUI_URL ?? 'http://127.0.0.1:8000/agui?mode=crew'
+// a2ui=tool makes the AG-UI server emit A2UI surfaces as render_a2ui tool calls
+// (which we render in app/page.tsx) rather than CUSTOM events. No server env var
+// needed — the carrier is requested per-call here.
+const AGUI_URL = process.env.AGUI_URL ?? 'http://127.0.0.1:8000/agui?mode=crew&a2ui=tool'
 
 const copilotRuntime = new CopilotRuntime({
   agents: { tripweaver: new HttpAgent({ url: AGUI_URL }) },
