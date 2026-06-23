@@ -55,6 +55,27 @@ function RegisterA2UIRenderer() {
   return null
 }
 
+// Render-only: while a crew agent is running, the backend emits an in-progress
+// `agent_step` tool call; show it as "Starting <Agent>…" with a spinner, then a
+// done marker when it completes.
+function RegisterAgentStep() {
+  useCopilotAction({
+    name: 'agent_step',
+    available: 'disabled',
+    render: ({ status, args }) => {
+      const agent = ((args as Record<string, unknown>)?.agent as string) || 'agent'
+      const done = status === 'complete'
+      return (
+        <div className="tw-agent-step">
+          <span className={done ? 'tw-dot-done' : 'tw-spinner'} aria-hidden />
+          <span>{done ? `${agent} — done` : `Starting ${agent}…`}</span>
+        </div>
+      )
+    },
+  })
+  return null
+}
+
 export default function Home() {
   return (
     <CopilotKit runtimeUrl="/api/copilotkit" agent="tripweaver">
@@ -68,6 +89,7 @@ export default function Home() {
             </p>
           </header>
           <RegisterA2UIRenderer />
+          <RegisterAgentStep />
           <div className="chat">
             <CopilotChat
               labels={{

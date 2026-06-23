@@ -81,3 +81,13 @@ body {
   cursor: pointer;
 }
 .tw-a2ui button:hover { background: #1d4ed8 !important; }
+
+/* "Starting <Agent>…" progress row (agent_step tool render). */
+.tw-agent-step { display: flex; align-items: center; gap: 8px; padding: 6px 2px; color: var(--muted); font-size: 13px; }
+.tw-spinner {
+  width: 14px; height: 14px; flex: none;
+  border: 2px solid #2c3a58; border-top-color: var(--accent);
+  border-radius: 50%; display: inline-block; animation: tw-spin 0.7s linear infinite;
+}
+.tw-dot-done { width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--good); display: inline-block; }
+@keyframes tw-spin { to { transform: rotate(360deg); } }

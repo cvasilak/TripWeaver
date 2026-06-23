@@ -195,12 +195,17 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         # agents invoke shows up in the chat as a tool call. scoped_handlers keeps
         # the subscriptions local to this run.
         from crewai.events import crewai_event_bus
+        from crewai.events.types.agent_events import (
+            AgentExecutionCompletedEvent,
+            AgentExecutionStartedEvent,
+        )
         from crewai.events.types.tool_usage_events import (
             ToolUsageFinishedEvent,
             ToolUsageStartedEvent,
         )
 
         tool_calls: dict[str, str] = {}
+        agent_calls: dict[str, str] = {}
 
         def _args_delta(value: Any) -> str:
             return value if isinstance(value, str) else json.dumps(value, default=str)
@@ -221,6 +226,23 @@ async def crew_runner(agent_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
                     emit(ToolCallEndEvent(tool_call_id=tc))
                     emit(ToolCallResultEvent(message_id=uuid.uuid4().hex, tool_call_id=tc,
                                              content=str(getattr(e, "output", ""))[:600], role="tool"))
+
+                @crewai_event_bus.on(AgentExecutionStartedEvent)
+                def _agent_started(_source: Any, e: Any) -> None:
+                    # A render-only "agent_step" tool call: it stays in-progress
+                    # (spinner) until the agent finishes; the frontend renders it as
+                    # "Starting <agent>…".
+                    tc = uuid.uuid4().hex
+                    agent_calls[e.agent_id] = tc
+                    emit(ToolCallStartEvent(tool_call_id=tc, tool_call_name="agent_step"))
+                    emit(ToolCallArgsEvent(tool_call_id=tc, delta=json.dumps({"agent": e.agent_role})))
+
+                @crewai_event_bus.on(AgentExecutionCompletedEvent)
+                def _agent_completed(_source: Any, e: Any) -> None:
+                    tc = agent_calls.pop(e.agent_id, None) or uuid.uuid4().hex
+                    emit(ToolCallEndEvent(tool_call_id=tc))
+                    emit(ToolCallResultEvent(message_id=uuid.uuid4().hex, tool_call_id=tc,
+                                             content="{}", role="tool"))
 
                 crew = build_crew(task_callback=task_callback)
                 result = crew.kickoff(inputs=req)
