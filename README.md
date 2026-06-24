@@ -263,7 +263,7 @@ lifecycle.
 agui/
   server.py          # FastAPI: POST /agui (SSE) + serves the demo page at /
   runners.py         # demo_runner (no LLM) and crew_runner (real crew)
-  test_client.py     # Python SSE consumer — prints/asserts the event stream
+  test_client.py     # Python SSE consumer — prints/asserts the stream (--debug echoes raw events)
   static/index.html  # zero-build browser page that renders the live stream
 backend/
   a2a_client.py      # + aquery_supplier() async variant (the server is async)
@@ -291,8 +291,13 @@ Then either open the browser page or use the Python client:
 ```bash
 # Browser: open http://127.0.0.1:8000/  and click "Plan my trip"
 # Terminal:
-uv run python -m agui.test_client demo     # or: crew  (needs API credits)
+uv run python -m agui.test_client demo             # or: crew  (needs API credits)
+uv run python -m agui.test_client demo --debug     # also echo every raw AG-UI event as JSON
 ```
+
+Pass `--debug` (or `-d` / `--raw`) to the client to print each raw AG-UI event —
+exactly the JSON shown in the wire-format example below — interleaved with the
+rendered reply. Without it you get just the readable summary.
 
 A demo run produces this AG-UI event stream on the wire (real output, trimmed —
 each line is one SSE frame; long payloads abbreviated with `…`):
