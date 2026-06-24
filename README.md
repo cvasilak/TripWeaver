@@ -329,7 +329,10 @@ camelCase — `threadId`, `toolCallName`), and `STATE_DELTA` carries a JSON-Patc
 ### Using CopilotKit (the production-grade frontend)
 
 The bundled page is deliberately dependency-free so you can *see* the raw AG-UI
-events. For a real app you'd point **CopilotKit** (`@copilotkit/react-core` +
+events. Flip the **Raw debug** toggle in the page header to echo every raw event
+(as JSON) into the event log — the browser counterpart of the client's `--debug`;
+the choice is remembered across reloads. For a real app you'd point **CopilotKit**
+(`@copilotkit/react-core` +
 `@ag-ui/client`) at the same `/agui` endpoint and get chat, generative UI, shared
 state, and human-in-the-loop out of the box — which is exactly what Phase 4
 (A2UI) builds on.

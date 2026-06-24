@@ -22,6 +22,13 @@
     #events { font-family:ui-monospace,Menlo,monospace; font-size:12px; max-height:280px; overflow:auto; }
     #events div { padding:2px 0; border-bottom:1px solid #1d2740; }
     .ev-tool { color:var(--accent); } .ev-state { color:var(--good); } .ev-run { color:var(--muted); } .ev-err { color:#ff7a7a; }
+    .ev-raw { color:#6b7da0; white-space:pre-wrap; word-break:break-word; }
+    .switch { display:flex; align-items:center; gap:8px; cursor:pointer; color:var(--muted); font-size:12px; user-select:none; }
+    .switch input { display:none; }
+    .switch .slider { width:38px; height:20px; border-radius:999px; background:#2c3a58; position:relative; transition:background .15s; flex:0 0 auto; }
+    .switch .slider::before { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:#8aa0c0; transition:transform .15s, background .15s; }
+    .switch input:checked + .slider { background:var(--accent); }
+    .switch input:checked + .slider::before { transform:translateX(18px); background:#06203b; }
     pre#state { font-size:12px; max-height:360px; overflow:auto; background:#101725; padding:10px; border-radius:8px; margin:0; }
     .full { grid-column:1 / -1; }
   </style>
@@ -33,6 +40,11 @@
       <div class="sub">Watch the agent's events arrive in real time over SSE.</div>
     </div>
     <div class="controls">
+      <label class="switch" title="Echo every raw AG-UI event into the log">
+        <input type="checkbox" id="debug" />
+        <span class="slider"></span>
+        <span>Raw debug</span>
+      </label>
       <select id="mode">
         <option value="demo">demo (no LLM — real A2A calls)</option>
         <option value="crew">crew (real CrewAI — needs API credits)</option>
@@ -120,7 +132,11 @@
           while ((i = buf.indexOf("\n\n")) >= 0) {
             const frame = buf.slice(0, i); buf = buf.slice(i + 2);
             const line = frame.split("\n").find((l) => l.startsWith("data:"));
-            if (line) handle(JSON.parse(line.slice(5).trim()));
+            if (line) {
+              const ev = JSON.parse(line.slice(5).trim());
+              if ($("debug").checked) logEvent("ev-raw", "raw › " + JSON.stringify(ev));
+              handle(ev);
+            }
           }
         }
       } catch (err) {
@@ -130,6 +146,11 @@
       }
     }
     $("go").addEventListener("click", run);
+
+    // Remember the raw-debug toggle across reloads.
+    $("debug").checked = localStorage.getItem("agui-debug") === "1";
+    $("debug").addEventListener("change", () =>
+      localStorage.setItem("agui-debug", $("debug").checked ? "1" : "0"));
   </script>
 </body>
 </html>
