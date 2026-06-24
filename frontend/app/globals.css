@@ -1,11 +1,11 @@
 :root {
-  --bg: #0f1422;
-  --panel: #172033;
-  --ink: #e7ecf5;
-  --muted: #8aa0c0;
-  --accent: #5db0ff;
-  --good: #34d399;
-  color-scheme: dark;
+  --bg: #eef2f8;     /* page background */
+  --panel: #ffffff;  /* chat surface */
+  --ink: #0f1422;    /* primary text */
+  --muted: #5b6b86;  /* secondary text */
+  --accent: #2563eb; /* primary / buttons (matches the card buttons) */
+  --good: #16a34a;   /* success */
+  color-scheme: light;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
@@ -20,28 +20,29 @@ body {
 .shell header p { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
 .shell header em { color: var(--ink); }
 
-/* Give the CopilotKit chat a sized container, and tint it to match. */
-.chat { flex: 1; min-height: 0; border: 1px solid #243049; border-radius: 12px; overflow: hidden; }
+/* Give the CopilotKit chat a sized container. */
+.chat { flex: 1; min-height: 0; border: 1px solid #d7deea; border-radius: 12px; overflow: hidden; }
 .chat .copilotKitChat { height: 100%; }
 
 /* CopilotKit theme variables (its styles.css reads these). */
 .shell {
   --copilot-kit-background-color: var(--panel);
-  --copilot-kit-input-background-color: #0e1626; /* was defaulting to light (#fbfbfb) -> invisible typed text */
+  --copilot-kit-input-background-color: #ffffff;
   --copilot-kit-primary-color: var(--accent);
-  --copilot-kit-contrast-color: #06203b;
-  --copilot-kit-secondary-color: #101a2e;
+  --copilot-kit-contrast-color: #ffffff; /* text on the primary (send) button */
+  --copilot-kit-secondary-color: #f1f5fb;
   --copilot-kit-secondary-contrast-color: var(--ink);
-  --copilot-kit-separator-color: #243049;
+  --copilot-kit-separator-color: #e2e8f2;
   --copilot-kit-muted-color: var(--muted);
 }
 
 /* CopilotKit re-declares its theme vars on its own wrapper, so the
-   --copilot-kit-input-background-color override above doesn't reach the input
-   (it stayed light → invisible typed text). Force the input classes directly. */
+   --copilot-kit-input-background-color above may not reach the input. Force the
+   input classes directly so it stays light even if the OS is in dark mode (which
+   CopilotKit would otherwise auto-detect via prefers-color-scheme). */
 .copilotKitInput,
 .copilotKitInputContainer {
-  background: #0e1626 !important;
+  background: #ffffff !important;
 }
 .copilotKitInput textarea,
 .copilotKitInputContainer textarea,
@@ -54,10 +55,10 @@ body {
   color: var(--muted) !important;
 }
 
-/* A2UI surface (rendered by @copilotkit/a2ui-renderer). Its components draw
-   white cards + transparent areas and inherit text color — light-on-dark in our
-   chat = unreadable. Present the whole surface as one crisp light "card panel":
-   consistent light background + dark text everywhere, accent buttons. */
+/* A2UI surface (rendered by @copilotkit/a2ui-renderer). Its components inherit
+   text color and draw transparent areas, so we present the whole surface as one
+   crisp "card panel": a consistent light background + dark text + accent buttons,
+   set off from the chat by a border. */
 .tw-a2ui {
   --a2ui-primary-color: #2563eb;
   background: #f6f8fc;
@@ -87,14 +88,14 @@ body {
 .tw-agent-step { display: flex; align-items: center; gap: 8px; padding: 6px 2px; color: var(--muted); font-size: 13px; }
 .tw-spinner {
   width: 14px; height: 14px; flex: none;
-  border: 2px solid #2c3a58; border-top-color: var(--accent);
+  border: 2px solid #d7deea; border-top-color: var(--accent);
   border-radius: 50%; display: inline-block; animation: tw-spin 0.7s linear infinite;
 }
 .tw-dot-done { width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--good); display: inline-block; }
 @keyframes tw-spin { to { transform: rotate(360deg); } }
 
 /* "Pick your flight & hotel" human-in-the-loop picker (select_options action).
-   Same light "card panel" look as .tw-a2ui so it reads on the dark chat. */
+   Same "card panel" look as .tw-a2ui. */
 .tw-pick {
   background: #f6f8fc;
   color: #0f1422;
