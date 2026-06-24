@@ -377,9 +377,9 @@ export default function Home() {
       <A2UIProvider catalog={basicCatalog} onAction={(a: unknown) => console.log('[a2ui action]', a)}>
         <div className="shell">
           <header>
-            <h1>TripWeaver — CopilotKit (full runtime)</h1>
+            <h1>TripWeaver</h1>
             <p>
-              The CopilotKit runtime drives our AG-UI agent; A2UI surfaces render in the chat.
+              A conversational trip-planning concierge.
               Try: <em>“Plan my 8-day trip to Tokyo.”</em>
             </p>
           </header>
