@@ -1,14 +1,15 @@
 # TripWeaver
 
 A conversational trip-planning concierge, built as a hands-on example of four
-agent technologies stacked together:
+agent technologies — plus a production CopilotKit frontend — stacked together:
 
 | Tech | Role in TripWeaver | Phase |
 |------|--------------------|-------|
 | **CrewAI** | The orchestration brain — a crew of role-based agents | 1 ✓ |
 | **A2A** | Reaching external supplier agents (flights, hotels) | 2 ✓ |
 | **AG-UI** | Streaming the live agent activity to a frontend | 3 ✓ |
-| **A2UI** | Declarative, interactive UI rendered from the agent | **4 (this phase)** |
+| **A2UI** | Declarative, interactive UI rendered from the agent | 4 ✓ |
+| **CopilotKit** | Production frontend — chat, generative UI, **human-in-the-loop** | 5 ✓ |
 
 Each phase is added on top of a working baseline, so when something breaks you
 know which layer to blame.
@@ -424,11 +425,85 @@ drive it (needs `ANTHROPIC_API_KEY`).
 
 ---
 
-## All four phases, together
+## Phase 5 — Human-in-the-loop in CopilotKit (crew mode)
 
-A single conversation now exercises the full stack: **CrewAI** orchestrates,
-calls **A2A** supplier agents, streams everything over **AG-UI**, and renders it
-as interactive **A2UI** — with a human-in-the-loop gate before booking. From here
-the natural next steps are a production **CopilotKit** frontend (it consumes this
-exact `/agui` stream and renders A2UI as generative UI) and richer LLM-authored
-surfaces in `crew` mode.
+Phase 4's "Confirm & book" gate was a single A2UI button on the demo page. This
+phase makes the **crew itself** human-in-the-loop inside the production
+**CopilotKit** frontend (`frontend/`): the traveler **picks** their flight and
+hotel from the crew's ranked options, then **confirms** the booking — and the crew
+plans and books *around those choices*. It uses CopilotKit's native
+`renderAndWaitForResponse`, so each gate is a real tool call the agent waits on.
+
+Because an AG-UI run is one-directional SSE, each human decision returns on the
+**next** run as a `role:"tool"` message. So the flow spans three runs:
+
+```
+Run 1  Research crew  →  select_options   (await)  →  human picks flight + hotel
+Run 2  Planning crew  →  TripPlan  →  confirm_booking  (await)  →  human confirms
+Run 3  Booking crew   →  🎉 Booking confirmed
+```
+
+### What got added / changed
+
+```
+backend/
+  models.py   # + FlightOption(s)/HotelOption(s) (pickable) and BookingConfirmation
+  tools.py    # + book_flight / book_hotel (local mock reservation tools)
+  crew.py     # split into build_research_crew()  (ranked, pickable options),
+              #   build_planning_crew()  (plans around the human's pick), and
+              #   build_booking_crew()   (Booking Coordinator places the reservations).
+              #   build_crew() (the original autonomous run) is kept for the CLI.
+agui/
+  runners.py  # crew_runner is now a 3-run state machine: it emits result-less
+              #   select_options / confirm_booking tool calls as HITL gates and reads
+              #   the human's reply from the next run's tool message.
+  a2ui.py     # trip_plan_surface drops its button (the HITL tool replaces it);
+              #   booking_confirmation_surface gains the agent's message + emojis.
+frontend/app/
+  page.tsx    # + select_options + confirm_booking renderAndWaitForResponse actions;
+              #   a gold "AI's top pick" badge on the crew's #1 ranked flight & hotel.
+```
+
+The crew no longer chooses the flight/hotel itself — the **researchers rank**, the
+**human picks**, and the **planner/auditor** build the trip around that choice.
+
+### How the round-trip works
+
+A gate is a tool call emitted with **no result** (`TOOL_CALL_START`/`ARGS`/`END`,
+then `RUN_FINISHED`). CopilotKit's `renderAndWaitForResponse` renders it and hands
+the component a `respond(...)` callback; calling it produces a `role:"tool"`
+message that arrives on the next run. The runner resolves the phase by scanning the
+incoming messages newest-first (`_read_confirmation` → `_read_selection` → fresh),
+with a guard that ignores an already-answered gate so post-booking chatter can't
+re-book.
+
+### Run it
+
+This phase runs in the **CopilotKit app** (not the demo page). Its runtime route
+points at `?mode=crew&a2ui=tool`, so it needs the suppliers and an API key.
+
+```bash
+# 1) suppliers + AG-UI server (restart agui.server after any backend change —
+#    uvicorn doesn't hot-reload; use --reload while iterating)
+uv run python -m a2a_suppliers.flight_supplier &
+uv run python -m a2a_suppliers.hotel_supplier  &
+uv run python -m agui.server                       # :8000
+
+# 2) the CopilotKit frontend
+cd frontend && npm install && npm run dev          # :3000  ->  /api/copilotkit -> :8000 (crew)
+```
+
+Open http://127.0.0.1:3000 and ask *"Plan my 8-day trip to Tokyo."* → pick a
+flight & hotel (the ★ badge marks the crew's top pick) → review the plan →
+**Confirm Booking** → 🎉 confirmation.
+
+---
+
+## All five phases, together
+
+A single conversation now exercises the full stack: **CrewAI** orchestrates, calls
+**A2A** supplier agents, streams everything over **AG-UI**, and renders it as
+interactive **A2UI** — inside a production **CopilotKit** frontend with real
+**human-in-the-loop** gates (pick your flight & hotel, then confirm the booking).
+From here the natural next steps are A2A "book" supplier skills (the booking tools
+are local mocks for now) and richer LLM-authored surfaces.
